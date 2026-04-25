@@ -1,0 +1,5 @@
+# Editor / OS noise
+.elixir_ls/
+.DS_Store
+*~
+*.swp
