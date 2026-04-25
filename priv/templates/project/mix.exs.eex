@@ -1,0 +1,45 @@
+defmodule <%= module %>.MixProject do
+  use Mix.Project
+
+  def project do
+    [
+      app: :<%= app %>,
+      version: "0.1.0",
+      elixir: "~> 1.16",
+      elixirc_paths: elixirc_paths(Mix.env()),
+      start_permanent: Mix.env() == :prod,
+      deps: deps()
+    ]
+  end
+
+  def application do
+    [
+      extra_applications: [:logger, :crypto, :public_key, :ssl],
+      mod: {<%= module %>.Application, []}
+    ]
+  end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
+  defp deps do
+    [
+      # Soot framework libraries.
+      {:ash_pki, "~> 0.1"},
+      {:ash_mqtt, "~> 0.1"},
+      {:soot_core, "~> 0.1"},
+      {:soot_telemetry, "~> 0.1"},
+      {:soot_segments, "~> 0.1"},
+      {:soot_contracts, "~> 0.1"},
+      {:soot_admin, "~> 0.1"},
+
+      # Ash + Postgres.
+      {:ash, "~> 3.24"},
+      {:ash_postgres, "~> 2.4"},
+
+      # Web.
+      {:bandit, "~> 1.5"},
+      {:plug, "~> 1.19"}
+    ]
+  end
+end

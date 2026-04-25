@@ -18,8 +18,9 @@ is released independently.
 | `soot_telemetry`       | 4   | **landed** — stream DSL, schema fingerprinting, ingest plug, rate limiter, ClickHouse DDL generator |
 | `soot_segments`        | 5   | **landed** — segment DSL, MV/backfill compiler, query helpers, mix tasks |
 | `soot_contracts`       | 6   | **landed** — signed contract bundles, `/.well-known/soot/contract` plug, diff tool |
-| `soot_admin`           | 6   | not started — Cinder/LiveView panels |
-| `soot` (umbrella meta) | 6   | not started — `mix soot.new`, broker config templates, demo app |
+| `soot_admin`           | 6   | **landed** — Cinder table configs + LiveView component shells |
+| `ash_jwt`              | 6   | **landed** — JWT bearer-token plug as the mTLS escape hatch |
+| `soot` (umbrella meta) | 6   | **landed** — `mix soot.new`, `mix soot.broker.gen_config`, [`SCALING.md`](SCALING.md) |
 
 ## Deployment
 

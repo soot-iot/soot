@@ -1,0 +1,21 @@
+defmodule <%= module %>.Application do
+  @moduledoc false
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    children = [
+      # Add your repo / Bandit endpoint / supervised processes here.
+      # Example for the lean topology:
+      #
+      #   <%= module %>.Repo,
+      #   {Bandit, plug: <%= module %>.Endpoint, scheme: :https,
+      #    cert_keyfile: "priv/pki/server_chain.pem",
+      #    key_keyfile: "priv/pki/server_key.pem",
+      #    cacertfile: "priv/pki/trust_bundle.pem",
+      #    verify: :verify_peer, fail_if_no_peer_cert: true}
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: <%= module %>.Supervisor)
+  end
+end

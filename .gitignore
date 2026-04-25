@@ -1,5 +1,12 @@
-# Editor / OS noise
-.elixir_ls/
+/_build/
+/cover/
+/deps/
+/doc/
+/.fetch
+erl_crash.dump
+*.ez
+*.beam
+/.elixir_ls/
 .DS_Store
 *~
 *.swp

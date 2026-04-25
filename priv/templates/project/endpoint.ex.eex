@@ -1,0 +1,28 @@
+defmodule <%= module %>.Endpoint do
+  @moduledoc """
+  Plug pipeline for the Soot endpoints.
+
+  Mount upstream of all of these, in order:
+    * `AshPki.Plug.MTLS` — terminates and verifies the device certificate.
+    * `SootCore.Plug.Enroll` — POST /enroll for `:bootstrapped` devices.
+    * `SootTelemetry.Plug.Ingest` — POST /ingest/:stream_name.
+    * `SootContracts.Plug.WellKnown` — GET /.well-known/soot/contract.
+
+  See the README for the deployment runbook.
+  """
+
+  use Plug.Router
+
+  plug Plug.Logger
+  plug AshPki.Plug.MTLS, require_known_certificate: true
+  plug :match
+  plug :dispatch
+
+  forward "/enroll", to: SootCore.Plug.Enroll
+  forward "/ingest", to: SootTelemetry.Plug.Ingest
+  forward "/.well-known/soot/contract", to: SootContracts.Plug.WellKnown
+
+  match _ do
+    send_resp(conn, 404, "")
+  end
+end
