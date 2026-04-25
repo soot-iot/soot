@@ -11,11 +11,12 @@ independently.
 
 | Library | Phase | Repo / status |
 |---|---|---|
-| `ash_pki`            | 1 | separate repo (working: CA hierarchy, cert issuance/revocation, CRLs, mTLS plug, mix tasks) |
-| `soot_core`          | 2 | not started |
-| `ash_mqtt`           | 3 | not started |
-| `soot_telemetry`     | 4 | not started |
-| `soot_segments`      | 5 | not started |
-| `soot_contracts`     | 6 | not started |
-| `soot_admin`         | 6 | not started |
-| `soot` (umbrella meta) | 6 | not started |
+| `ash_pki`              | 1   | separate repo, **landed** — CA hierarchy, cert issuance/revocation, CRLs, mTLS plug, mix tasks |
+| `soot_core`            | 2   | separate repo, **landed** — Tenant, SerialScheme, ProductionBatch, Device + state machine, EnrollmentToken, `/enroll` plug |
+| `ash_mqtt` (3a)        | 3a  | separate repo, **landed** — resource extension + broker config generation |
+| `ash_mqtt` (3b)        | 3b  | not started — action invocation over MQTT 5, shadow DSL |
+| `soot_telemetry`       | 4   | separate repo, **landed** — telemetry stream DSL, schema fingerprinting, ingest plug, ClickHouse DDL generator |
+| `soot_segments`        | 5   | not started |
+| `soot_contracts`       | 6   | not started |
+| `soot_admin`           | 6   | not started |
+| `soot` (umbrella meta) | 6   | not started |
