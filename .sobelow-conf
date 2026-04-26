@@ -1,0 +1,21 @@
+[
+  verbose: false,
+  private: false,
+  skip: false,
+  router: "",
+  exit: "Low",
+  format: "txt",
+  out: "",
+  threshold: "low",
+  # Traversal.FileModule fires on `EEx.eval_file(template_path, ...)` in
+  # the generator and the broker config tasks. Both template paths are
+  # operator-supplied via mix-task flags or come from the lib's bundled
+  # `priv/templates/`. Mix tasks are operator surface; the request-side
+  # XSS / file-traversal threat model does not apply.
+  ignore: ["Traversal.FileModule"],
+  ignore_files: [],
+  details: nil,
+  all_details: nil,
+  mark_skip_all: nil,
+  clear_skip: nil
+]
