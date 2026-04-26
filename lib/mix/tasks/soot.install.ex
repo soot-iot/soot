@@ -101,6 +101,7 @@ if Code.ensure_loaded?(Igniter) do
       |> compose_children(child_argv)
       |> generate_example_shadow(options)
       |> mount_device_pipeline()
+      |> patch_broker_runtime_config()
       |> note_next_steps(options)
     end
 
@@ -303,6 +304,34 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
+    # Patches `config/runtime.exs` with the operator's broker
+    # connection settings, all driven from env so the same release
+    # can roll across environments without recompilation. Defaults
+    # match the dev/test layout that `mix ash_pki.init --out priv/pki`
+    # produces and a local EMQX listening on 8883 with mTLS.
+    defp patch_broker_runtime_config(igniter) do
+      igniter
+      |> set_runtime_env(:ash_mqtt, [:broker_url], "ssl://localhost:8883", "SOOT_BROKER_URL")
+      |> set_runtime_env(:ash_mqtt, [:ca_path], "priv/pki/trust_bundle.pem", "SOOT_BROKER_CA")
+      |> set_runtime_env(
+        :ash_mqtt,
+        [:cert_path],
+        "priv/pki/server_chain.pem",
+        "SOOT_BROKER_CERT"
+      )
+      |> set_runtime_env(:ash_mqtt, [:key_path], "priv/pki/server_key.pem", "SOOT_BROKER_KEY")
+    end
+
+    defp set_runtime_env(igniter, app, key_path, default, env_var) do
+      Igniter.Project.Config.configure(
+        igniter,
+        "runtime.exs",
+        app,
+        key_path,
+        {:code, Sourceror.parse_string!(~s|System.get_env("#{env_var}", "#{default}")|)}
+      )
+    end
+
     defp note_next_steps(igniter, options) do
       example_lines =
         if options[:example] do
@@ -336,6 +365,18 @@ if Code.ensure_loaded?(Igniter) do
 
         Device-facing endpoints are mounted under the :device_mtls
         pipeline in your router. Admin LiveViews are at /admin.
+
+        Broker connection (in config/runtime.exs) reads from env:
+          SOOT_BROKER_URL    default ssl://localhost:8883
+          SOOT_BROKER_CA     default priv/pki/trust_bundle.pem
+          SOOT_BROKER_CERT   default priv/pki/server_chain.pem
+          SOOT_BROKER_KEY    default priv/pki/server_key.pem
+
+        After `mix soot.broker.gen_config`, push the rendered EMQX
+        bundle with:
+
+          mix soot.broker.push_emqx --url http://localhost:18083 \\
+              --api-key $EMQX_API_KEY --api-secret $EMQX_API_SECRET
         """)
 
       if options[:example] do
