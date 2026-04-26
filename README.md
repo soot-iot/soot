@@ -1,6 +1,14 @@
 # Soot
 
-IoT framework on Ash. See [`SPEC.md`](SPEC.md) for the full design.
+IoT framework on Ash.
+
+* [`SPEC.md`](SPEC.md) — backend v0.1, shipped.
+* [`SPEC-2.md`](SPEC-2.md) — backend v0.2 roadmap (hardening, OTA,
+  scale-out seams).
+* [`DEVICE-SPEC.md`](DEVICE-SPEC.md) — device-side libraries
+  (`soot_device_protocol`, `soot_device`, `soot_device_test`).
+* [`SCALING.md`](SCALING.md) — single-node ceilings and the seams that
+  lift each one.
 
 The framework is split across several repos. The `ash_*` prefix marks
 libraries that stand alone outside this framework; `soot_*` marks
@@ -11,16 +19,19 @@ is released independently.
 
 | Library | Phase | Status |
 |---|---|---|
-| `ash_pki`              | 1   | **landed** — CA hierarchy, cert issuance/revocation, CRLs, mTLS plug, mix tasks |
+| `ash_pki`              | 1   | **landed** — CA hierarchy, cert issuance/revocation, CRLs, mTLS plug, bulk import, PKCS#11 |
 | `soot_core`            | 2   | **landed** — Tenant, SerialScheme, ProductionBatch, Device + state machine, EnrollmentToken, `/enroll` plug |
 | `ash_mqtt` (3a)        | 3a  | **landed** — resource + shadow DSLs, Mosquitto + EMQX config generators |
-| `ash_mqtt` (3b)        | 3b  | not started — runtime client (planned: `:emqtt`) for action invocation over MQTT 5 |
+| `ash_mqtt` (3b)        | 3b  | **landed** — runtime client over `:emqtt` with request/reply correlation + dispatcher |
 | `soot_telemetry`       | 4   | **landed** — stream DSL, schema fingerprinting, ingest plug, rate limiter, ClickHouse DDL generator |
 | `soot_segments`        | 5   | **landed** — segment DSL, MV/backfill compiler, query helpers, mix tasks |
 | `soot_contracts`       | 6   | **landed** — signed contract bundles, `/.well-known/soot/contract` plug, diff tool |
 | `soot_admin`           | 6   | **landed** — Cinder table configs + LiveView component shells |
 | `ash_jwt`              | 6   | **landed** — JWT bearer-token plug as the mTLS escape hatch |
 | `soot` (umbrella meta) | 6   | **landed** — `mix soot.new`, `mix soot.broker.gen_config`, [`SCALING.md`](SCALING.md) |
+| `soot_device_protocol` | D1+ | not started — device-side imperative implementation of the protocol. See [`DEVICE-SPEC.md`](DEVICE-SPEC.md). |
+| `soot_device`          | D4  | not started — declarative DSL on top of `soot_device_protocol` |
+| `soot_device_test`     | D5  | not started — fixtures + simulators for device-side tests |
 
 ## Deployment
 
