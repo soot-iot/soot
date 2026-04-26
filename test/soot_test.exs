@@ -18,10 +18,11 @@ defmodule SootTest do
     end
   end
 
-  test "extensions_loaded?/0 returns false when ash_jwt isn't compiled into this build" do
-    # ash_jwt is intentionally NOT a dep of :soot in v0.1 because it's
-    # an escape hatch; this guard just makes sure the helper is wired
-    # against actual module loading rather than a static list.
-    assert is_boolean(Soot.extensions_loaded?())
+  test "extensions_loaded?/0 returns true on a healthy build" do
+    # ash_jwt is intentionally NOT a dep of :soot in v0.1 (it's an
+    # opt-in escape hatch) and is flagged `optional?: true` in
+    # @libraries. Every other module is a path: dep of :soot, so the
+    # helper should report true after a clean compile.
+    assert Soot.extensions_loaded?()
   end
 end
