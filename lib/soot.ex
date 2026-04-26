@@ -3,9 +3,10 @@ defmodule Soot do
   Soot — IoT framework on Ash.
 
   This module is the umbrella entry point. The framework's
-  functionality lives in the constituent libraries (`ash_pki`,
-  `ash_mqtt`, `soot_core`, `soot_telemetry`, `soot_segments`,
-  `soot_contracts`, `soot_admin`). The `:soot` package itself ships:
+  functionality lives in the constituent libraries — see
+  `libraries/0` for the canonical list (kept in sync with the
+  `@libraries` module attribute below). The `:soot` package itself
+  ships:
 
     * `Mix.Tasks.Soot.New` — `mix soot.new my_iot` to scaffold a new
       project with all libraries wired in.

@@ -76,6 +76,21 @@ v0.1 demos) this step is a no-op.
 
 ### 3. Broker configuration
 
+The `:soot` meta package ships `mix soot.broker.gen_config`, the
+recommended one-stop wrapper that renders both Mosquitto and EMQX
+configs (plus a complete `mosquitto.conf` from the bundled template)
+from a single resource list:
+
+```sh
+mix soot.broker.gen_config \
+      --out priv/broker \
+      --resource MyApp.Device --resource MyApp.Device.Shadow
+```
+
+Pass `--mosquitto-only` or `--emqx-only` to render just one set. The
+underlying per-broker generators are also available directly if the
+operator wants finer control:
+
 ```sh
 mix ash_mqtt.gen.mosquitto_acl \
       --out priv/broker/mosquitto.acl \

@@ -29,7 +29,9 @@ streams, and segments.
        --out priv/broker
    ```
 
-4. **Generate ClickHouse migrations**
+4. **Generate ClickHouse migrations** (after you've defined a
+   `Telemetry.Stream`, e.g. `<%= module %>.Telemetry.MyStream` —
+   no streams ship in the scaffolded project)
 
    ```sh
    mix soot_telemetry.gen_migrations \
@@ -39,7 +41,8 @@ streams, and segments.
    clickhouse-client --multiquery < priv/migrations/V0001__telemetry.sql
    ```
 
-5. **Build the contract bundle**
+5. **Build the contract bundle** (after you've defined the relevant
+   `mqtt` resource and `Telemetry.Stream` modules)
 
    ```sh
    mix soot.contracts.build \
