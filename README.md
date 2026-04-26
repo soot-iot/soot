@@ -5,6 +5,8 @@ IoT framework on Ash.
 * [`SPEC.md`](SPEC.md) — backend v0.1, shipped.
 * [`SPEC-2.md`](SPEC-2.md) — backend v0.2 roadmap (hardening, OTA,
   scale-out seams).
+* [`UI-SPEC.md`](UI-SPEC.md) — generator + admin UI design (igniter
+  installers on top of `phx.new`).
 * [`DEVICE-SPEC.md`](DEVICE-SPEC.md) — device-side libraries
   (`soot_device_protocol`, `soot_device`, `soot_device_test`).
 * [`SCALING.md`](SCALING.md) — single-node ceilings and the seams that
@@ -28,12 +30,48 @@ is released independently.
 | `soot_contracts`       | 6   | **landed** — signed contract bundles, `/.well-known/soot/contract` plug, diff tool |
 | `soot_admin`           | 6   | **landed** — Cinder table configs + LiveView component shells |
 | `ash_jwt`              | 6   | **landed** — standalone / opt-in escape hatch (JWT bearer-token plug; not pulled in by `:soot`) |
-| `soot` (umbrella meta) | 6   | **landed** — `mix soot.new`, `mix soot.broker.gen_config`, [`SCALING.md`](SCALING.md) |
+| `soot` (umbrella meta) | 6   | **landed** — `mix soot.install` (igniter), `mix soot.demo.seed`, `mix soot.broker.gen_config`, [`SCALING.md`](SCALING.md) |
 | `soot_device_protocol` | D1+ | not started — device-side imperative implementation of the protocol. See [`DEVICE-SPEC.md`](DEVICE-SPEC.md). |
 | `soot_device`          | D4  | not started — declarative DSL on top of `soot_device_protocol` |
 | `soot_device_test`     | D5  | not started — fixtures + simulators for device-side tests |
 
-## Deployment
+## Quickstart
+
+The fast path. Generates a fresh Phoenix project with the entire Soot
+framework wired up — admin LiveView, device-facing endpoints, PKI,
+broker config, ClickHouse migrations.
+
+```sh
+mix archive.install hex igniter_new
+mix archive.install hex phx_new
+mix igniter.new my_iot \
+    --install soot \
+    --with phx.new \
+    --with-args="--no-mailer --database postgres"
+
+cd my_iot
+mix ash.setup           # apply migrations + extension setup
+mix soot.demo.seed      # optional: plant demo tenant + 25 devices + admin user
+mix phx.server
+```
+
+Browse to <http://localhost:4000/admin> and sign in with the credentials
+the seed task printed. Device-facing endpoints (`/enroll`, `/ingest`,
+`/.well-known/soot/contract`) listen on the same port behind mTLS.
+
+`mix igniter.install soot` is the umbrella; it composes per-library
+installers (`ash_pki.install`, `soot_core.install`, `soot_admin.install`,
+…) in the right order. See [`UI-SPEC.md`](UI-SPEC.md) for the full
+design and [`UI-SPEC.md` §4](UI-SPEC.md) for the per-installer
+responsibility table.
+
+## Deployment (manual reference)
+
+The Quickstart runs all of the steps below as part of
+`mix igniter.install soot` plus `mix ash.setup`. This section
+documents what those tasks are doing under the hood — useful when an
+installer step needs to be re-run, swapped out, or applied to a
+project that did not start from `igniter.new`.
 
 The libraries are designed to be standalone, but deploying the framework
 end-to-end has a specific ordering. Each step's output is the next step's
@@ -182,21 +220,34 @@ is what devices use to know they're up to date.
 
 ### 7. Endpoints
 
-The Ash app's Phoenix / Bandit pipeline mounts (in this order, all
-behind a shared `AshPki.Plug.MTLS`):
+`mix igniter.install soot` mounts these in the operator's Phoenix
+router under a `:device_mtls` pipeline that runs `AshPki.Plug.MTLS`
+before dispatch:
 
 ```elixir
-forward "/enroll", to: SootCore.Plug.Enroll          # Phase 2
-forward "/ingest", to: SootTelemetry.Plug.Ingest     # Phase 4
-forward "/.well-known/soot/contract",
-  to: SootContracts.Plug.WellKnown                   # Phase 6
+pipeline :device_mtls do
+  plug AshPki.Plug.MTLS, require_known_certificate: true
+end
+
+scope "/" do
+  pipe_through :device_mtls
+
+  forward "/enroll", SootCore.Plug.Enroll               # Phase 2
+  forward "/ingest", SootTelemetry.Plug.Ingest          # Phase 4
+  forward "/.well-known/soot/contract",
+    SootContracts.Plug.WellKnown                        # Phase 6
+end
 ```
 
-For dev / demos these can run on Bandit directly with the
-`server_chain.pem` + `server_key.pem` from `priv/pki/`. Production
-typically terminates TLS at a load balancer; in that case use
-`AshPki.Plug.MTLS` in `header_mode: {:enabled, "x-client-cert"}` and
-trust the LB to inject the verified cert.
+By default the same Bandit listener serves both the admin browser
+pipeline (no client cert) and the `:device_mtls` pipeline (cert
+required). The `AshPki.Plug.MTLS` plug enforces cert presence on
+device routes only; admin sessions go through unchallenged. Operators
+behind a TLS-terminating load balancer can flip the plug to
+`header_mode: {:enabled, "x-client-cert"}` and trust the LB to inject
+the verified cert. Operators wanting a hard split between admin and
+device endpoints can re-run the installer with `--split-endpoints`
+(planned, see [`UI-SPEC.md` §5](UI-SPEC.md)).
 
 ### 8. Explicit backfills (only when needed)
 
