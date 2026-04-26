@@ -180,8 +180,8 @@ of correlation and reply-topic publication.
 
 #### `SootDeviceProtocol.Telemetry.Pipeline`
 
-Local Dux-backed (DuckDB) buffer plus an uploader. Writes go through
-this; the uploader either:
+`Duxedo`-backed buffer plus an uploader. Writes go through this; the
+uploader either:
 
 * **Default path:** posts Arrow IPC batches to `/ingest/<stream>` on
   the backend, mTLS-authenticated, with the headers the backend's
@@ -191,7 +191,12 @@ this; the uploader either:
   meaningful when the device has direct ClickHouse identity, which
   is rare; default off.
 
-Buffer semantics:
+Tabular storage on the device is delegated to `:duxedo`
+(see §5.5). The pipeline does not own its own buffer — it asks
+duxedo for an Arrow IPC view of the next batch, posts it, and
+on success drops the rows back through duxedo.
+
+Buffer semantics (provided by duxedo):
 
 * Bounded by `:retention_bytes` (default ~64 MiB) and
   `:retention_rows` (default ~1 M); whichever fires first triggers
@@ -273,7 +278,48 @@ SootDeviceProtocol.Supervisor (:rest_for_one)
 processes down with it; the storage and enrollment layers are
 independent.
 
-### 5.4 Non-goals for v1
+### 5.4 Tabular storage — `:duxedo`
+
+Devices need a place to hold tabular data: telemetry batches waiting
+for upload, sensor readings being aggregated locally, BEAM /
+application metrics. `Duxedo` is the canonical answer.
+
+It is a small DuckDB-backed library (in-memory + on-disk archive,
+periodic flush, retention policies, Arrow IPC export) that ships
+independently of soot — operators with no soot stack at all should
+still find it useful for any "store tabular data on a Nerves device
+and ship it elsewhere later" job. It lives at
+`/home/lawik/sprawl/soot/duxedo/` for proximity to the framework but
+holds no soot-specific code.
+
+Soot uses duxedo in two roles:
+
+* **Streams.** Each `:soot_telemetry` stream becomes a typed table
+  in duxedo. `Telemetry.Pipeline.write/3` does a bulk insert; the
+  uploader pulls a batch back as Arrow IPC and posts it. The
+  retention policy drops oldest-first when the budget is exceeded.
+* **Self-metrics (optional).** Duxedo's existing collector subscribes
+  to the device's `:telemetry` events (BEAM memory, request
+  latency, dhcp lease grants, …) and folds them into the
+  `observations` / `events` tables; an operator that wants those
+  uploaded sets up a stream that points at them.
+
+Duxedo's API surface for soot:
+
+* `Duxedo.Streams.define/3` — declare a typed table from an Arrow
+  schema (or a simpler Elixir map of `name → type`).
+* `Duxedo.Streams.append/3` — bulk-insert rows.
+* `Duxedo.Streams.take_oldest/3` — pull the next batch (rows + the
+  sequence numbers).
+* `Duxedo.Streams.drop_through/3` — drop rows up to a sequence after
+  the upload succeeds.
+* `Duxedo.Streams.to_arrow_ipc/2` — Arrow IPC bytes of a batch,
+  ready to post.
+
+Boundary rule: nothing in `Duxedo.*` references soot. The soot
+device library consumes the API; non-soot users do too.
+
+### 5.5 Non-goals for v1
 
 Carried over from `SPEC.md` §6:
 
@@ -400,7 +446,8 @@ already running from `SPEC.md` v0.1.
 
 ### Phase D3 — Telemetry pipeline
 
-* Dux-backed local buffer.
+* `Duxedo`-backed local buffer (one typed table per stream; rows in,
+  Arrow IPC out).
 * HTTP/2 ingest uploader against `/ingest/<stream>`.
 * ADBC-direct uploader (deferred — ADBC ClickHouse driver maturity
   on Nerves targets is unproven; keep as a code path but don't
@@ -408,6 +455,9 @@ already running from `SPEC.md` v0.1.
 * Schema-fingerprint mismatch handling: trigger
   `Contract.Refresh.force_refresh/0` on 409.
 * Sequence-number persistence across reboots.
+
+Duxedo's `Streams` API (§5.4) is built as part of this phase; it is
+soot-independent and ships as `:duxedo` on hex.
 
 **Owner:** Single instance. Depends on D1; can run in parallel with
 D2.
@@ -441,14 +491,14 @@ implementation time:
 | dep                     | purpose                                            | choice signal |
 |-------------------------|----------------------------------------------------|---------------|
 | `:emqtt` or `tortoise_mqtt` | MQTT 5 client                                  | mirror the backend's pick once 3b stabilises |
-| `:dux` (or DuckDB binding) | local Arrow-shaped buffer                       | per `SPEC.md` §6.5 — Dux fits naturally        |
-| `:adbc` (optional)      | direct ClickHouse upload                            | only needed for the rare direct-identity path  |
+| `:duxedo`               | tabular store + Arrow IPC export (wraps `:dux` and `:adbc`) | per §5.4 — soot-independent, useful on its own |
 | `:mint` / `:finch`      | HTTP/2 client for ingest + bundle fetch             | pick the one already on the Nerves target      |
 | `:x509`                 | cert + CSR ops                                      | already used backend-side                       |
+| `:telemetry`            | event emission                                      | per §10.1                                       |
 
 Nerves-target portability dictates avoiding heavyweight C-NIFs where
-possible. The MQTT-client choice and Dux's NIF surface are the two
-likely friction points.
+possible. The MQTT-client choice and duxedo's NIF surface (DuckDB
+via `:dux`) are the two likely friction points.
 
 ## 10. Cross-cutting
 
