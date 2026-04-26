@@ -47,6 +47,7 @@ defmodule Mix.Tasks.Soot.New do
     [app_name | _] = positional
     app = String.replace(app_name, "-", "_") |> String.downcase()
     module = Keyword.get(opts, :module, Macro.camelize(app))
+    validate_module_name!(module)
     into = Keyword.get(opts, :into, app)
     force? = Keyword.get(opts, :force, false)
 
@@ -88,6 +89,18 @@ defmodule Mix.Tasks.Soot.New do
 
     See README.md in the new project for the full bring-up checklist.
     """)
+  end
+
+  @module_re ~r/\A[A-Z][A-Za-z0-9_.]*\z/
+
+  defp validate_module_name!(module) do
+    if !Regex.match?(@module_re, module) do
+      Mix.raise("""
+      invalid module name `#{module}` — must start with an uppercase
+      letter and contain only letters, digits, underscores, and dots
+      (e.g. `MyIot`, `Acme.IoT`).
+      """)
+    end
   end
 
   defp write_file(path, contents, force?) do
