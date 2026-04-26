@@ -38,7 +38,13 @@ defmodule Mix.Tasks.Soot.New do
   def run([]), do: Mix.raise("Usage: mix soot.new <app_name> [--module Name] [--into path]")
 
   def run(argv) do
-    {opts, [app_name | _]} = OptionParser.parse!(argv, strict: @switches)
+    {opts, positional} = OptionParser.parse!(argv, strict: @switches)
+
+    if positional == [] do
+      Mix.raise("Usage: mix soot.new <app_name> [--module Name] [--into path]")
+    end
+
+    [app_name | _] = positional
     app = String.replace(app_name, "-", "_") |> String.downcase()
     module = Keyword.get(opts, :module, Macro.camelize(app))
     into = Keyword.get(opts, :into, app)
