@@ -92,7 +92,7 @@ defmodule Mix.Tasks.Soot.InstallTest do
       setup_project()
       |> Igniter.compose_task("soot.install", [])
       |> assert_has_patch("lib/test_web/router.ex", """
-      + |    pipe_through :device_mtls
+      + |    pipe_through [:device_mtls]
       """)
       |> assert_has_patch("lib/test_web/router.ex", """
       + |    forward("/enroll", SootCore.Plug.Enroll)
@@ -152,13 +152,13 @@ defmodule Mix.Tasks.Soot.InstallTest do
           |> hd()
         end)
 
-      assert "ash_pki.install" in skipped
-      assert "soot_core.install" in skipped
-      assert "ash_mqtt.install" in skipped
-      assert "soot_telemetry.install" in skipped
-      assert "soot_segments.install" in skipped
-      assert "soot_contracts.install" in skipped
-      assert "soot_admin.install" in skipped
+      # The ash/auth installers aren't available in soot's deps because
+      # soot only depends on ash_pki/soot_* directly. The skip warning
+      # should still surface them by name so the operator knows what's
+      # missing.
+      assert "ash_authentication.install" in skipped
+      assert "ash_authentication_phoenix.install" in skipped
+      assert "ash_postgres.install" in skipped
     end
   end
 
@@ -173,10 +173,10 @@ defmodule Mix.Tasks.Soot.InstallTest do
       assert Enum.any?(igniter.notices, &(&1 =~ "/admin"))
     end
 
-    test "schedules soot.demo.seed when --example is passed" do
+    test "schedules soot.demo.seed by default (--example is on)" do
       igniter =
         test_project(files: %{})
-        |> Igniter.compose_task("soot.install", ["--example"])
+        |> Igniter.compose_task("soot.install", [])
 
       assert Enum.any?(igniter.tasks, fn
                {"soot.demo.seed", _, _} -> true
@@ -185,16 +185,41 @@ defmodule Mix.Tasks.Soot.InstallTest do
              end)
     end
 
-    test "does not schedule soot.demo.seed without --example" do
+    test "does not schedule soot.demo.seed when --no-example is passed" do
       igniter =
         test_project(files: %{})
-        |> Igniter.compose_task("soot.install", [])
+        |> Igniter.compose_task("soot.install", ["--no-example"])
 
       refute Enum.any?(igniter.tasks, fn
                {"soot.demo.seed", _, _} -> true
                {"soot.demo.seed", _} -> true
                _ -> false
              end)
+    end
+  end
+
+  describe "--example default" do
+    test "generates the example DeviceShadow resource by default" do
+      result =
+        test_project(files: %{})
+        |> Igniter.compose_task("soot.install", [])
+
+      assert_creates(result, "lib/test/devices/device_shadow.ex")
+
+      diff = diff(result, only: "lib/test/devices/device_shadow.ex")
+      assert diff =~ "use Ash.Resource"
+      assert diff =~ "AshMqtt.Shadow"
+      assert diff =~ ":weather_enabled"
+      assert diff =~ ":weather_interval_s"
+      assert diff =~ ":label"
+    end
+
+    test "does not generate DeviceShadow when --no-example is passed" do
+      result =
+        test_project(files: %{})
+        |> Igniter.compose_task("soot.install", ["--no-example"])
+
+      refute_creates(result, "lib/test/devices/device_shadow.ex")
     end
   end
 end

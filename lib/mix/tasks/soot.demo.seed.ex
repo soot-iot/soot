@@ -12,23 +12,26 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
 
   ## What it creates
 
-    * Tenant `demo`
-    * SerialScheme `DEMO-{seq:6}`
-    * ProductionBatch with 25 unprovisioned devices
-    * Admin user (printed credentials at the end)
-    * Telemetry stream `vibration` (axis_x/y/z float32)
-    * Segment `vibration_p95_hourly`
+    * `SootCore.Tenant` slug: `demo`
+    * `SootCore.SerialScheme` `DEMO-` prefix
+    * `SootCore.ProductionBatch` `demo-batch-1`
+    * 5 unprovisioned `SootCore.Device` rows under that batch
+    * Per-device `SootCore.DeviceShadow` with desired state
+      `{weather_enabled: true, weather_interval_s: 60, label: "lab-N"}`
+    * Admin `<App>.Accounts.User` (printed credentials at the end)
+    * Registers `MyApp.Telemetry.{Cpu,Memory,Disk,OutdoorTemperature}`
+      stream modules via `SootTelemetry.Registry.register_all/1`
 
   ## Options
 
-    * `--simulator` — start a background task that publishes fake
-      telemetry every few seconds so the admin's Telemetry tab has
-      moving data. Press Ctrl+C to stop.
+    * `--simulator` — pulse log lines on a few seconds' interval to
+      mimic a running fleet. Press Ctrl+C to stop. (Real telemetry
+      simulation lands once the device-side example is wired up.)
     * `--admin-email` — email for the seeded admin user. Default
       `admin@example.com`.
     * `--admin-password` — password. Default `demo-password`. Printed
       to stdout regardless of source.
-    * `--batch-size` — how many devices in the batch. Default 25.
+    * `--batch-size` — how many devices in the batch. Default 5.
   """
 
   use Mix.Task
@@ -44,7 +47,7 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     simulator: false,
     admin_email: "admin@example.com",
     admin_password: "demo-password",
-    batch_size: 25
+    batch_size: 5
   ]
 
   @impl Mix.Task
@@ -58,31 +61,36 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
 
     Mix.shell().info("==> Soot demo seed starting (app: #{inspect(app_module)})\n")
 
-    tenant = seed_tenant(app_module)
-    scheme = seed_serial_scheme(app_module, tenant)
-    batch = seed_batch(app_module, tenant, scheme, opts[:batch_size])
+    tenant = seed_tenant()
+    scheme = seed_serial_scheme(tenant)
+    batch = seed_batch(tenant, scheme)
+    devices = seed_devices(tenant, scheme, batch, opts[:batch_size])
+    _shadows = seed_shadows(devices)
     _user = seed_admin_user(app_module, opts[:admin_email], opts[:admin_password])
-    stream = seed_telemetry_stream(app_module, tenant)
-    _segment = seed_segment(app_module, stream)
+    _streams = seed_telemetry_streams(app_module)
 
     Mix.shell().info("""
 
     ==> Demo seed complete.
 
       Tenant:           #{tenant_label(tenant)}
-      Serial scheme:    DEMO-{seq:6}
-      Production batch: #{batch_label(batch)} (#{opts[:batch_size]} devices)
-      Telemetry stream: vibration
-      Segment:          vibration_p95_hourly
+      Serial scheme:    DEMO- (#{tenant_label(tenant)})
+      Production batch: #{batch_label(batch)} (#{opts[:batch_size]} unprovisioned devices)
+      Telemetry streams: cpu, memory, disk, outdoor_temperature
+      Shadow desired:   weather_enabled=true, weather_interval_s=60, label="lab-N"
 
       Admin sign-in:    #{opts[:admin_email]} / #{opts[:admin_password]}
 
     Visit http://localhost:4000/admin after `mix phx.server`.
+
+    Devices land in :unprovisioned. Once the device-side example
+    bootstraps + enrolls, they advance through the state machine to
+    :operational on their own.
     """)
 
     if opts[:simulator] do
       Mix.shell().info("==> Starting simulator (Ctrl+C to stop)…\n")
-      run_simulator(app_module, batch, stream)
+      run_simulator()
     end
   end
 
@@ -95,46 +103,34 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     |> Module.concat()
   end
 
-  defp seed_tenant(app) do
-    resource = Module.concat([app, "Devices", "Tenant"])
-    require_resource!(resource, "soot_core")
-
-    case call_create(resource, %{name: "demo", slug: "demo"}) do
+  defp seed_tenant do
+    case SootCore.Tenant.create("demo", "Demo Tenant") do
       {:ok, tenant} ->
         Mix.shell().info("    create  Tenant 'demo'")
         tenant
 
-      {:error, error} ->
-        case lookup_existing(resource, slug: "demo") do
+      {:error, _} ->
+        case SootCore.Tenant.get_by_slug("demo") do
           {:ok, tenant} ->
             Mix.shell().info("    exists  Tenant 'demo'")
             tenant
 
           _ ->
-            Mix.raise("Failed to create demo tenant: #{inspect(error)}")
+            Mix.raise("Failed to create demo tenant.")
         end
     end
   end
 
-  defp seed_serial_scheme(app, tenant) do
-    resource = Module.concat([app, "Devices", "SerialScheme"])
-    require_resource!(resource, "soot_core")
-
-    attrs = %{
-      tenant_id: tenant_id(tenant),
-      name: "demo",
-      pattern: "DEMO-{seq:6}"
-    }
-
-    case call_create(resource, attrs) do
+  defp seed_serial_scheme(tenant) do
+    case SootCore.SerialScheme.create(tenant.id, "demo-scheme", "DEMO-") do
       {:ok, scheme} ->
-        Mix.shell().info("    create  SerialScheme 'DEMO-{seq:6}'")
+        Mix.shell().info("    create  SerialScheme 'DEMO-'")
         scheme
 
       {:error, _} ->
-        case lookup_existing(resource, name: "demo") do
-          {:ok, scheme} ->
-            Mix.shell().info("    exists  SerialScheme 'DEMO-{seq:6}'")
+        case SootCore.SerialScheme.for_tenant(tenant.id) do
+          {:ok, [scheme | _]} ->
+            Mix.shell().info("    exists  SerialScheme 'DEMO-'")
             scheme
 
           _ ->
@@ -143,131 +139,135 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     end
   end
 
-  defp seed_batch(app, tenant, scheme, count) do
-    resource = Module.concat([app, "Devices", "ProductionBatch"])
-    require_resource!(resource, "soot_core")
-
-    attrs = %{
-      tenant_id: tenant_id(tenant),
-      serial_scheme_id: Map.get(scheme, :id),
-      label: "demo-batch-1",
-      device_count: count
-    }
-
-    case call_create(resource, attrs) do
+  defp seed_batch(tenant, scheme) do
+    case SootCore.ProductionBatch.create(tenant.id, scheme.id, "demo-batch-1") do
       {:ok, batch} ->
-        Mix.shell().info("    create  ProductionBatch 'demo-batch-1' (#{count} devices)")
+        Mix.shell().info("    create  ProductionBatch 'demo-batch-1'")
         batch
 
-      {:error, error} ->
-        Mix.raise("Failed to create demo batch: #{inspect(error)}")
-    end
-  end
-
-  defp seed_admin_user(app, email, password) do
-    resource = Module.concat([app, "Accounts", "User"])
-    require_resource!(resource, "ash_authentication")
-
-    attrs = %{
-      email: email,
-      password: password,
-      password_confirmation: password
-    }
-
-    case call_register(resource, attrs) do
-      {:ok, user} ->
-        Mix.shell().info("    create  Admin user #{email}")
-        user
-
       {:error, _} ->
-        case lookup_existing(resource, email: email) do
-          {:ok, user} ->
-            Mix.shell().info("    exists  Admin user #{email}")
-            user
+        case SootCore.ProductionBatch.for_tenant(tenant.id) do
+          {:ok, [batch | _]} ->
+            Mix.shell().info("    exists  ProductionBatch 'demo-batch-1'")
+            batch
 
           _ ->
-            Mix.raise("Failed to create admin user.")
+            Mix.raise("Failed to create demo batch.")
         end
     end
   end
 
-  defp seed_telemetry_stream(app, tenant) do
-    resource = Module.concat([app, "Telemetry", "Stream"])
-    require_resource!(resource, "soot_telemetry")
+  defp seed_devices(tenant, _scheme, _batch, count) do
+    for i <- 1..count do
+      serial = "DEMO-#{String.pad_leading(Integer.to_string(i), 4, "0")}"
 
-    attrs = %{
-      tenant_id: tenant_id(tenant),
-      name: "vibration",
-      fields: [
-        %{name: "axis_x", type: "float32"},
-        %{name: "axis_y", type: "float32"},
-        %{name: "axis_z", type: "float32"}
-      ],
-      retention_months: 12,
-      clickhouse_engine: "MergeTree"
-    }
+      case SootCore.Device.create_unprovisioned(tenant.id, serial) do
+        {:ok, device} ->
+          Mix.shell().info("    create  Device #{serial}")
+          device
 
-    case call_create(resource, attrs) do
-      {:ok, stream} ->
-        Mix.shell().info("    create  Telemetry stream 'vibration'")
-        stream
+        {:error, _} ->
+          case SootCore.Device.get_by_serial(tenant.id, serial) do
+            {:ok, device} ->
+              Mix.shell().info("    exists  Device #{serial}")
+              device
 
-      {:error, _} ->
-        case lookup_existing(resource, name: "vibration") do
-          {:ok, stream} ->
-            Mix.shell().info("    exists  Telemetry stream 'vibration'")
-            stream
-
-          _ ->
-            Mix.raise("Failed to create telemetry stream.")
-        end
+            _ ->
+              Mix.raise("Failed to create device #{serial}.")
+          end
+      end
     end
   end
 
-  defp seed_segment(app, stream) do
-    resource = Module.concat([app, "Segments", "Segment"])
-    require_resource!(resource, "soot_segments")
+  defp seed_shadows(devices) do
+    for {device, idx} <- Enum.with_index(devices, 1) do
+      desired = %{
+        "weather_enabled" => true,
+        "weather_interval_s" => 60,
+        "label" => "lab-#{idx}"
+      }
 
-    attrs = %{
-      name: "vibration_p95_hourly",
-      source_stream_id: Map.get(stream, :id),
-      granularity: "1h",
-      metrics: [%{column: "axis_x", aggregation: "p95"}]
-    }
-
-    case call_create(resource, attrs) do
-      {:ok, segment} ->
-        Mix.shell().info("    create  Segment 'vibration_p95_hourly'")
-        segment
-
-      {:error, _} ->
-        case lookup_existing(resource, name: "vibration_p95_hourly") do
-          {:ok, segment} -> segment
-          _ -> Mix.raise("Failed to create segment.")
+      shadow =
+        case SootCore.DeviceShadow.create(device.id) do
+          {:ok, shadow} -> shadow
+          {:error, _} ->
+            case SootCore.DeviceShadow.for_device(device.id) do
+              {:ok, shadow} -> shadow
+              _ -> Mix.raise("Failed to create shadow for device #{device.id}.")
+            end
         end
+
+      case SootCore.DeviceShadow.update_desired(shadow, desired) do
+        {:ok, _updated} ->
+          Mix.shell().info("    shadow  device #{device.serial} desired=#{inspect(desired)}")
+          shadow
+
+        {:error, _} ->
+          Mix.shell().info("    skip    shadow update for #{device.serial}")
+          shadow
+      end
     end
   end
 
-  defp run_simulator(_app, _batch, _stream) do
-    # Placeholder: real simulator wiring lives behind the Phase 6 device
-    # libraries. For now, just pulse a log line so the operator sees
-    # something.
-    Stream.repeatedly(fn ->
-      Process.sleep(2_000)
-      Mix.shell().info("    simulator  tick (placeholder — real device lib lands in Phase 6)")
-    end)
-    |> Enum.each(& &1)
-  end
+  defp seed_admin_user(app_module, email, password) do
+    resource = Module.concat([app_module, "Accounts", "User"])
 
-  defp call_create(resource, attrs) do
-    if function_exported?(resource, :create, 1) do
-      resource.create(attrs)
+    if !Code.ensure_loaded?(resource) do
+      Mix.shell().info("    skip    Admin user (#{inspect(resource)} not present — run ash_authentication.install first)")
+      :skipped
     else
-      Ash.Seed.seed!(resource, attrs)
-      |> then(&{:ok, &1})
+      attrs = %{email: email, password: password, password_confirmation: password}
+
+      case call_register(resource, attrs) do
+        {:ok, user} ->
+          Mix.shell().info("    create  Admin user #{email}")
+          user
+
+        {:error, _} ->
+          case lookup_existing(resource, email: email) do
+            {:ok, user} ->
+              Mix.shell().info("    exists  Admin user #{email}")
+              user
+
+            _ ->
+              Mix.shell().info("    skip    Admin user (registration unavailable)")
+              :skipped
+          end
+      end
+    end
+  end
+
+  defp seed_telemetry_streams(app_module) do
+    candidates = [
+      Module.concat([app_module, "Telemetry", "Cpu"]),
+      Module.concat([app_module, "Telemetry", "Memory"]),
+      Module.concat([app_module, "Telemetry", "Disk"]),
+      Module.concat([app_module, "Telemetry", "OutdoorTemperature"])
+    ]
+
+    available = Enum.filter(candidates, &Code.ensure_loaded?/1)
+
+    case SootTelemetry.Registry.register_all(available) do
+      {:ok, results} ->
+        for module <- available, do: Mix.shell().info("    register Stream #{inspect(module)}")
+        results
+
+      {:error, error} ->
+        Mix.shell().info("    skip    telemetry stream registration: #{inspect(error)}")
+        []
     end
   rescue
-    e -> {:error, e}
+    e ->
+      Mix.shell().info("    skip    telemetry stream registration: #{Exception.message(e)}")
+      []
+  end
+
+  defp run_simulator do
+    Stream.repeatedly(fn ->
+      Process.sleep(2_000)
+      Mix.shell().info("    simulator  tick (real device sim lands once soot_nerves_example is wired up)")
+    end)
+    |> Enum.each(& &1)
   end
 
   defp call_register(resource, attrs) do
@@ -300,22 +300,6 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     _ -> :error
   end
 
-  defp require_resource!(module, lib) do
-    if !Code.ensure_loaded?(module) do
-      Mix.raise("""
-      Demo seed requires #{inspect(module)}.
-
-      It looks like the `#{lib}` installer has not been run yet, or the
-      module name does not match the convention. Re-run:
-
-          mix igniter.install soot
-
-      Or pass the correct module name via task options.
-      """)
-    end
-  end
-
-  defp tenant_id(tenant), do: Map.get(tenant, :id)
   defp tenant_label(tenant), do: Map.get(tenant, :slug) || Map.get(tenant, :name) || "<unknown>"
-  defp batch_label(batch), do: Map.get(batch, :label) || "<unknown>"
+  defp batch_label(batch), do: Map.get(batch, :code) || "<unknown>"
 end
