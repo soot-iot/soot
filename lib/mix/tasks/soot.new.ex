@@ -71,6 +71,10 @@ defmodule Mix.Tasks.Soot.New do
     Next:
 
       cd #{into}
+      # The generated mix.exs uses path: deps for the framework libraries
+      # (v0.1 is not on hex yet). Make sure ash_pki, ash_mqtt, soot_core,
+      # soot_telemetry, soot_segments, soot_contracts, and soot_admin are
+      # checked out as siblings of #{into}/ before running:
       mix deps.get
       mix ash_pki.init --out priv/pki
 

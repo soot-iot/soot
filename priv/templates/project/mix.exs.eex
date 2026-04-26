@@ -24,14 +24,17 @@ defmodule <%= module %>.MixProject do
 
   defp deps do
     [
-      # Soot framework libraries.
-      {:ash_pki, "~> 0.1"},
-      {:ash_mqtt, "~> 0.1"},
-      {:soot_core, "~> 0.1"},
-      {:soot_telemetry, "~> 0.1"},
-      {:soot_segments, "~> 0.1"},
-      {:soot_contracts, "~> 0.1"},
-      {:soot_admin, "~> 0.1"},
+      # Soot framework libraries. v0.1 is not on hex yet, so the generator
+      # emits path: deps assuming the user has each library checked out as
+      # a sibling of this project. Switch to hex-version requirements once
+      # the libraries publish.
+      {:ash_pki, path: "../ash_pki"},
+      {:ash_mqtt, path: "../ash_mqtt"},
+      {:soot_core, path: "../soot_core"},
+      {:soot_telemetry, path: "../soot_telemetry"},
+      {:soot_segments, path: "../soot_segments"},
+      {:soot_contracts, path: "../soot_contracts"},
+      {:soot_admin, path: "../soot_admin"},
 
       # Ash + Postgres.
       {:ash, "~> 3.24"},
