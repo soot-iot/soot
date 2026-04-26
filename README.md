@@ -27,7 +27,7 @@ is released independently.
 | `soot_segments`        | 5   | **landed** — segment DSL, MV/backfill compiler, query helpers, mix tasks |
 | `soot_contracts`       | 6   | **landed** — signed contract bundles, `/.well-known/soot/contract` plug, diff tool |
 | `soot_admin`           | 6   | **landed** — Cinder table configs + LiveView component shells |
-| `ash_jwt`              | 6   | **landed** — JWT bearer-token plug as the mTLS escape hatch |
+| `ash_jwt`              | 6   | **landed** — standalone / opt-in escape hatch (JWT bearer-token plug; not pulled in by `:soot`) |
 | `soot` (umbrella meta) | 6   | **landed** — `mix soot.new`, `mix soot.broker.gen_config`, [`SCALING.md`](SCALING.md) |
 | `soot_device_protocol` | D1+ | not started — device-side imperative implementation of the protocol. See [`DEVICE-SPEC.md`](DEVICE-SPEC.md). |
 | `soot_device`          | D4  | not started — declarative DSL on top of `soot_device_protocol` |
@@ -86,6 +86,21 @@ and `soot_contracts`'s bundle history. With ETS data layers (default in
 v0.1 demos) this step is a no-op.
 
 ### 3. Broker configuration
+
+The `:soot` meta package ships `mix soot.broker.gen_config`, the
+recommended one-stop wrapper that renders both Mosquitto and EMQX
+configs (plus a complete `mosquitto.conf` from the bundled template)
+from a single resource list:
+
+```sh
+mix soot.broker.gen_config \
+      --out priv/broker \
+      --resource MyApp.Device --resource MyApp.Device.Shadow
+```
+
+Pass `--mosquitto-only` or `--emqx-only` to render just one set. The
+underlying per-broker generators are also available directly if the
+operator wants finer control:
 
 ```sh
 mix ash_mqtt.gen.mosquitto_acl \

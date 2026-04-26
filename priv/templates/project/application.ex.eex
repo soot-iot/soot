@@ -5,7 +5,8 @@ defmodule <%= module %>.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Add your repo / Bandit endpoint / supervised processes here.
+      # UNCOMMENT after running `mix ash_pki.init` and similar setup steps:
+      # add your repo / Bandit endpoint / supervised processes here.
       # Example for the lean topology:
       #
       #   <%= module %>.Repo,

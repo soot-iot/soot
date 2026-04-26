@@ -24,6 +24,6 @@ defmodule Soot.Test.Fixtures.Device do
   end
 
   mqtt do
-    topic "tenants/:tenant_id/devices/:device_id/up", as: :up, direction: :outbound
+    topic("tenants/:tenant_id/devices/:device_id/up", as: :up, direction: :outbound)
   end
 end

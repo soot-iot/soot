@@ -38,9 +38,16 @@ defmodule Mix.Tasks.Soot.New do
   def run([]), do: Mix.raise("Usage: mix soot.new <app_name> [--module Name] [--into path]")
 
   def run(argv) do
-    {opts, [app_name | _]} = OptionParser.parse!(argv, strict: @switches)
+    {opts, positional} = OptionParser.parse!(argv, strict: @switches)
+
+    if positional == [] do
+      Mix.raise("Usage: mix soot.new <app_name> [--module Name] [--into path]")
+    end
+
+    [app_name | _] = positional
     app = String.replace(app_name, "-", "_") |> String.downcase()
     module = Keyword.get(opts, :module, Macro.camelize(app))
+    validate_module_name!(module)
     into = Keyword.get(opts, :into, app)
     force? = Keyword.get(opts, :force, false)
 
@@ -50,6 +57,8 @@ defmodule Mix.Tasks.Soot.New do
 
     [
       {"mix.exs.eex", "mix.exs"},
+      {".tool-versions", ".tool-versions"},
+      {"app.ex.eex", "lib/#{app}.ex"},
       {"application.ex.eex", "lib/#{app}/application.ex"},
       {"endpoint.ex.eex", "lib/#{app}/endpoint.ex"},
       {"README.md.eex", "README.md"}
@@ -71,11 +80,27 @@ defmodule Mix.Tasks.Soot.New do
     Next:
 
       cd #{into}
+      # The generated mix.exs uses path: deps for the framework libraries
+      # (v0.1 is not on hex yet). Make sure ash_pki, ash_mqtt, soot_core,
+      # soot_telemetry, soot_segments, soot_contracts, and soot_admin are
+      # checked out as siblings of #{into}/ before running:
       mix deps.get
       mix ash_pki.init --out priv/pki
 
     See README.md in the new project for the full bring-up checklist.
     """)
+  end
+
+  @module_re ~r/\A[A-Z][A-Za-z0-9_.]*\z/
+
+  defp validate_module_name!(module) do
+    if !Regex.match?(@module_re, module) do
+      Mix.raise("""
+      invalid module name `#{module}` — must start with an uppercase
+      letter and contain only letters, digits, underscores, and dots
+      (e.g. `MyIot`, `Acme.IoT`).
+      """)
+    end
   end
 
   defp write_file(path, contents, force?) do

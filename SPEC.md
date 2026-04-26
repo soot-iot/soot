@@ -266,8 +266,8 @@ end
 
 **ClickHouse migration generator:**
 
-- `mix soot.telemetry.gen_migrations` — generates ClickHouse DDL from current `Telemetry.Stream` definitions.
-- `mix soot.telemetry.migrate` — applies migrations.
+- `mix soot_telemetry.gen_migrations` — generates ClickHouse DDL from current `Telemetry.Stream` definitions.
+- (No `migrate` task ships in v0.1; the framework intentionally does not own a ClickHouse migration runner — operators apply DDL with their existing tooling.)
 - Schema evolution: additive changes (new nullable columns) generate `ALTER TABLE` migrations. Breaking changes require a new schema version and a documented backfill path.
 
 **Non-goals for v1:** automatic backfill on schema change, multi-region replication coordination, tiered storage / cold storage automation.
@@ -290,8 +290,8 @@ end
 
 **Mix tasks:**
 
-- `mix soot.segments.gen_migrations` — diff active segments vs. ClickHouse state, generate DDL.
-- `mix soot.segments.migrate` — apply.
+- `mix soot_segments.gen_migrations` — diff active segments vs. ClickHouse state, generate DDL.
+- (No `migrate` task ships in v0.1; the framework intentionally does not own a ClickHouse migration runner — operators apply DDL with their existing tooling.)
 
 **Query helpers:**
 
@@ -362,7 +362,7 @@ Cinder-based building blocks for the operator's Phoenix LiveView admin app.
 - Mix tasks:
   - `mix soot.new` — generate a fresh project with the framework wired up.
   - `mix soot.broker.gen_config` — render EMQX or Mosquitto config from current resources.
-  - `mix soot.demo` — spin up a demo with a couple of simulated devices for local development.
+  - `mix soot.demo` — spin up a demo with a couple of simulated devices for local development. **(Deferred; not shipped in v0.1.)**
 - Documentation:
   - Quickstart from clean repo to working mTLS + telemetry in <30 minutes.
   - Honest scaling cliff doc: "this topology serves N devices / M msg/sec; here's what to change at each ceiling."

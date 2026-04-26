@@ -48,6 +48,55 @@ defmodule Soot.MixTasksTest do
       assert File.read!(Path.join(target, "mix.exs")) =~ "defmodule Acme.IoT.MixProject"
     end
 
+    test "rejects an invalid --module name" do
+      assert_raise Mix.Error, ~r/invalid module name/, fn ->
+        Mix.Tasks.Soot.New.run([
+          "weird",
+          "--into",
+          Path.join(@tmp, "weird"),
+          "--module",
+          "1Foo"
+        ])
+      end
+
+      assert_raise Mix.Error, ~r/invalid module name/, fn ->
+        Mix.Tasks.Soot.New.run([
+          "weird",
+          "--into",
+          Path.join(@tmp, "weird2"),
+          "--module",
+          "lower_case"
+        ])
+      end
+    end
+
+    test "the rendered mix.exs parses as valid Elixir with the expected children" do
+      target = Path.join(@tmp, "parse_check")
+
+      capture_io(fn ->
+        Mix.Tasks.Soot.New.run(["parse_check", "--into", target])
+      end)
+
+      mix_exs = File.read!(Path.join(target, "mix.exs"))
+
+      # Must parse without error.
+      ast = Code.string_to_quoted!(mix_exs)
+      assert match?({:defmodule, _, _}, ast)
+
+      # Sanity-check that the deps list is path: (bug 1) and not the
+      # not-yet-published hex requirements that would break `mix deps.get`.
+      assert mix_exs =~ ~s({:ash_pki, path: "../ash_pki"})
+      refute mix_exs =~ ~s({:ash_pki, "~>)
+
+      # Other generated files exist.
+      assert File.exists?(Path.join(target, ".tool-versions"))
+      assert File.exists?(Path.join(target, "lib/parse_check.ex"))
+
+      # And lib/<app>.ex parses too.
+      app_ex = File.read!(Path.join(target, "lib/parse_check.ex"))
+      assert match?({:defmodule, _, _}, Code.string_to_quoted!(app_ex))
+    end
+
     test "skips existing files unless --force" do
       target = Path.join(@tmp, "exists")
       File.mkdir_p!(target)
@@ -87,7 +136,9 @@ defmodule Soot.MixTasksTest do
       assert File.exists?(Path.join(out, "emqx.json"))
 
       assert File.read!(Path.join(out, "mosquitto.acl")) =~ "tenants/%u/devices/%c/up"
-      assert {:ok, %{"acl" => _, "rules" => _}} = Jason.decode(File.read!(Path.join(out, "emqx.json")))
+
+      assert {:ok, %{"acl" => _, "rules" => _}} =
+               Jason.decode(File.read!(Path.join(out, "emqx.json")))
     end
 
     test "--mosquitto-only skips emqx.json" do
@@ -146,6 +197,52 @@ defmodule Soot.MixTasksTest do
           ])
         end)
       end
+    end
+
+    test "raises when --mosquitto-template points at a non-existent file" do
+      out = Path.join(@tmp, "broker_missing_tpl")
+      missing = Path.join(@tmp, "no_such_template.eex")
+
+      assert_raise Mix.Error, ~r/--mosquitto-template/, fn ->
+        capture_io(fn ->
+          Mix.Tasks.Soot.Broker.GenConfig.run([
+            "--out",
+            out,
+            "--mosquitto-template",
+            missing,
+            "--resource",
+            "Soot.Test.Fixtures.Device"
+          ])
+        end)
+      end
+    end
+
+    test "substitutes --ca-file/--cert-file/--key-file into mosquitto.conf" do
+      out = Path.join(@tmp, "broker_paths")
+
+      capture_io(fn ->
+        Mix.Tasks.Soot.Broker.GenConfig.run([
+          "--out",
+          out,
+          "--mosquitto-only",
+          "--ca-file",
+          "/tmp/example/ca.pem",
+          "--cert-file",
+          "/tmp/example/server_chain.pem",
+          "--key-file",
+          "/tmp/example/server_key.pem",
+          "--persistence-dir",
+          "/tmp/example/mosq-data",
+          "--resource",
+          "Soot.Test.Fixtures.Device"
+        ])
+      end)
+
+      conf = File.read!(Path.join(out, "mosquitto.conf"))
+      assert conf =~ "cafile /tmp/example/ca.pem"
+      assert conf =~ "certfile /tmp/example/server_chain.pem"
+      assert conf =~ "keyfile /tmp/example/server_key.pem"
+      assert conf =~ "persistence_location /tmp/example/mosq-data"
     end
   end
 
