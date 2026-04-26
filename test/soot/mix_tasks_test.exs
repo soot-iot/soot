@@ -87,7 +87,9 @@ defmodule Soot.MixTasksTest do
       assert File.exists?(Path.join(out, "emqx.json"))
 
       assert File.read!(Path.join(out, "mosquitto.acl")) =~ "tenants/%u/devices/%c/up"
-      assert {:ok, %{"acl" => _, "rules" => _}} = Jason.decode(File.read!(Path.join(out, "emqx.json")))
+
+      assert {:ok, %{"acl" => _, "rules" => _}} =
+               Jason.decode(File.read!(Path.join(out, "emqx.json")))
     end
 
     test "--mosquitto-only skips emqx.json" do
