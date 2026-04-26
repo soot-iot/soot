@@ -2,6 +2,7 @@ defmodule Soot.MixProject do
   use Mix.Project
 
   @version "0.1.0"
+  @source_url "https://github.com/lawik/soot"
 
   def project do
     [
@@ -10,10 +11,13 @@ defmodule Soot.MixProject do
       elixir: "~> 1.16",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      consolidate_protocols: Mix.env() != :test,
+      consolidate_protocols: Mix.env() == :prod,
       deps: deps(),
       description: description(),
-      package: package()
+      package: package(),
+      source_url: @source_url,
+      docs: docs(),
+      aliases: aliases()
     ]
   end
 
@@ -31,8 +35,26 @@ defmodule Soot.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      files: ~w(lib priv .formatter.exs mix.exs README.md SPEC.md SCALING.md),
-      links: %{}
+      files: ~w(lib priv .formatter.exs mix.exs README.md SPEC.md SCALING.md LICENSE* CHANGELOG*),
+      links: %{
+        "GitHub" => @source_url,
+        "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
+      }
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      source_ref: "v#{@version}",
+      extras: ["README.md", "SPEC.md", "SCALING.md"]
+    ]
+  end
+
+  defp aliases do
+    [
+      format: "format --migrate",
+      credo: "credo --strict"
     ]
   end
 
