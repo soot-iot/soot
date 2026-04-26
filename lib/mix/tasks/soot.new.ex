@@ -56,6 +56,8 @@ defmodule Mix.Tasks.Soot.New do
 
     [
       {"mix.exs.eex", "mix.exs"},
+      {".tool-versions", ".tool-versions"},
+      {"app.ex.eex", "lib/#{app}.ex"},
       {"application.ex.eex", "lib/#{app}/application.ex"},
       {"endpoint.ex.eex", "lib/#{app}/endpoint.ex"},
       {"README.md.eex", "README.md"}

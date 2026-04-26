@@ -1,0 +1,5 @@
+defmodule <%= module %> do
+  @moduledoc """
+  Top-level module for the <%= module %> Soot project.
+  """
+end

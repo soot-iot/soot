@@ -50,6 +50,11 @@ streams, and segments.
 
 6. **Start the app**
 
+   First edit `lib/<%= app %>/application.ex` to uncomment the supervised
+   children — by default the supervisor's child list is empty, so
+   `mix run --no-halt` will boot a noop app with no Bandit endpoint
+   listening.
+
    ```sh
    mix run --no-halt
    ```

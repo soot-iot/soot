@@ -43,7 +43,13 @@ defmodule Mix.Tasks.Soot.Broker.GenConfig do
 
   @impl Mix.Task
   def run(args) do
-    Mix.Task.run("app.start")
+    # `loadpaths` + `compile` is enough to make operator resource
+    # modules reachable for `Code.ensure_loaded/1`. Avoid `app.start`
+    # — it boots the operator's full supervision tree (Bandit, repo,
+    # …) just to render config files.
+    Mix.Task.run("loadpaths")
+    Mix.Task.run("compile")
+
     {opts, _} = OptionParser.parse!(args, strict: @switches)
 
     out = Keyword.fetch!(opts, :out)
@@ -57,15 +63,8 @@ defmodule Mix.Tasks.Soot.Broker.GenConfig do
 
     File.mkdir_p!(out)
 
-    cond do
-      only in [:both, :mosquitto] -> render_mosquitto(resources, out, opts)
-      true -> :skip
-    end
-
-    cond do
-      only in [:both, :emqx] -> render_emqx(resources, out)
-      true -> :skip
-    end
+    if only in [:both, :mosquitto], do: render_mosquitto(resources, out, opts)
+    if only in [:both, :emqx], do: render_emqx(resources, out)
   end
 
   defp mode(opts) do
