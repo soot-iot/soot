@@ -74,6 +74,7 @@ defmodule Soot.MixProject do
       {:soot_segments, path: "../soot_segments"},
       {:soot_contracts, path: "../soot_contracts"},
       {:soot_admin, path: "../soot_admin"},
+      {:igniter, "~> 0.6", optional: true},
       {:jason, "~> 1.4"},
 
       # Dev / test
