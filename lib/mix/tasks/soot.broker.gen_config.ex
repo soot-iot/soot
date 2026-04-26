@@ -138,7 +138,20 @@ defmodule Mix.Tasks.Soot.Broker.GenConfig do
 
   defp load_module(name) do
     mod = Module.concat([name])
-    Code.ensure_loaded!(mod)
-    mod
+
+    case Code.ensure_loaded(mod) do
+      {:module, ^mod} ->
+        mod
+
+      {:error, :nofile} ->
+        Mix.raise("""
+        could not load resource module `#{inspect(mod)}` — make sure it's
+        compiled and reachable from this project (did you forget
+        `MIX_ENV=test`?)
+        """)
+
+      {:error, reason} ->
+        Mix.raise("could not load resource module `#{inspect(mod)}`: #{inspect(reason)}")
+    end
   end
 end
