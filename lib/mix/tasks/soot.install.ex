@@ -157,18 +157,36 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp add_device_scope(igniter, router) do
-      Igniter.Libs.Phoenix.add_scope(
-        igniter,
-        "/",
-        """
-        pipe_through :device_mtls
+      if device_scope_present?(igniter, router) do
+        igniter
+      else
+        Igniter.Libs.Phoenix.add_scope(
+          igniter,
+          "/",
+          """
+          pipe_through :device_mtls
 
-        forward "/enroll", SootCore.Plug.Enroll
-        forward "/ingest", SootTelemetry.Plug.Ingest
-        forward "/.well-known/soot/contract", SootContracts.Plug.WellKnown
-        """,
-        router: router
-      )
+          forward "/enroll", SootCore.Plug.Enroll
+          forward "/ingest", SootTelemetry.Plug.Ingest
+          forward "/.well-known/soot/contract", SootContracts.Plug.WellKnown
+          """,
+          router: router
+        )
+      end
+    end
+
+    # The device scope is uniquely identifiable by the SootCore.Plug.Enroll
+    # forward. If we already see it in the router, the scope is mounted.
+    defp device_scope_present?(igniter, router) do
+      {_, _source, zipper} = Igniter.Project.Module.find_module!(igniter, router)
+
+      case Igniter.Code.Common.move_to(zipper, fn z ->
+             Igniter.Code.Function.function_call?(z, :forward, 2) and
+               Igniter.Code.Function.argument_equals?(z, 1, SootCore.Plug.Enroll)
+           end) do
+        {:ok, _} -> true
+        :error -> false
+      end
     end
 
     defp note_next_steps(igniter, options) do
