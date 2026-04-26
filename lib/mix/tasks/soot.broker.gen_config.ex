@@ -82,35 +82,52 @@ defmodule Mix.Tasks.Soot.Broker.GenConfig do
     File.write!(acl_path, AshMqtt.BrokerConfig.Mosquitto.render(resources))
     Mix.shell().info("    wrote #{acl_path}")
 
-    case render_mosquitto_conf(resources, out, acl_path, opts) do
-      {:ok, conf_path} -> Mix.shell().info("    wrote #{conf_path}")
-      :skipped -> :ok
-    end
+    {:ok, conf_path} = render_mosquitto_conf(resources, out, acl_path, opts)
+    Mix.shell().info("    wrote #{conf_path}")
   end
 
   defp render_mosquitto_conf(_resources, out, acl_path, opts) do
-    template_path =
-      Keyword.get(opts, :mosquitto_template) ||
-        :code.priv_dir(:soot)
-        |> List.to_string()
-        |> Path.join("templates/mosquitto.conf.eex")
+    {template_path, source} = resolve_template(opts)
 
-    if File.exists?(template_path) do
-      bindings = [
-        ca_file: Keyword.get(opts, :ca_file, "priv/pki/trust_bundle.pem"),
-        cert_file: Keyword.get(opts, :cert_file, "priv/pki/server_chain.pem"),
-        key_file: Keyword.get(opts, :key_file, "priv/pki/server_key.pem"),
-        acl_file: acl_path,
-        persistence_dir: Keyword.get(opts, :persistence_dir, "priv/broker/mosquitto-data")
-      ]
-
-      conf = EEx.eval_file(template_path, bindings)
-      conf_path = Path.join(out, "mosquitto.conf")
-      File.write!(conf_path, conf)
-      {:ok, conf_path}
-    else
-      :skipped
+    if !File.exists?(template_path) do
+      Mix.raise(template_missing_message(template_path, source))
     end
+
+    bindings = [
+      ca_file: Keyword.get(opts, :ca_file, "priv/pki/trust_bundle.pem"),
+      cert_file: Keyword.get(opts, :cert_file, "priv/pki/server_chain.pem"),
+      key_file: Keyword.get(opts, :key_file, "priv/pki/server_key.pem"),
+      acl_file: acl_path,
+      persistence_dir: Keyword.get(opts, :persistence_dir, "priv/broker/mosquitto-data")
+    ]
+
+    conf = EEx.eval_file(template_path, bindings)
+    conf_path = Path.join(out, "mosquitto.conf")
+    File.write!(conf_path, conf)
+    {:ok, conf_path}
+  end
+
+  defp resolve_template(opts) do
+    case Keyword.get(opts, :mosquitto_template) do
+      nil ->
+        bundled =
+          :code.priv_dir(:soot)
+          |> List.to_string()
+          |> Path.join("templates/mosquitto.conf.eex")
+
+        {bundled, :bundled}
+
+      explicit ->
+        {explicit, :explicit}
+    end
+  end
+
+  defp template_missing_message(path, :explicit) do
+    "mosquitto template not found at `#{path}` (passed via --mosquitto-template)"
+  end
+
+  defp template_missing_message(path, :bundled) do
+    "bundled mosquitto template missing at `#{path}` — this should not happen; please file a bug"
   end
 
   defp render_emqx(resources, out) do
