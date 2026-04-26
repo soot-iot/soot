@@ -17,7 +17,14 @@ defmodule Soot.MixProject do
       package: package(),
       source_url: @source_url,
       docs: docs(),
-      aliases: aliases()
+      aliases: aliases(),
+      dialyzer: [
+        plt_add_apps: [:mix, :ex_unit, :eex],
+        plt_core_path: "priv/plts",
+        plt_local_path: "priv/plts",
+        ignore_warnings: ".dialyzer_ignore.exs",
+        list_unused_filters?: true
+      ]
     ]
   end
 
