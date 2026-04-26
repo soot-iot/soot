@@ -76,6 +76,9 @@ defmodule Soot.MixProject do
       {:soot_admin, path: "../soot_admin"},
       {:igniter, "~> 0.6", optional: true},
       {:jason, "~> 1.4"},
+      # `mix soot.broker.push_emqx` POSTs the rendered EMQX bundle
+      # to a running broker's REST API.
+      {:req, "~> 0.5"},
 
       # Dev / test
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

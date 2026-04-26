@@ -124,6 +124,32 @@ defmodule Mix.Tasks.Soot.InstallTest do
     end
   end
 
+  describe "broker runtime config" do
+    test "patches runtime.exs with :ash_mqtt connection config from env" do
+      result =
+        setup_project()
+        |> Igniter.compose_task("soot.install", [])
+
+      diff = diff(result, only: "config/runtime.exs")
+
+      assert diff =~ ":ash_mqtt"
+      assert diff =~ ~s|System.get_env("SOOT_BROKER_URL"|
+      assert diff =~ ~s|"ssl://localhost:8883"|
+      assert diff =~ ~s|System.get_env("SOOT_BROKER_CA"|
+      assert diff =~ ~s|"priv/pki/trust_bundle.pem"|
+      assert diff =~ ~s|System.get_env("SOOT_BROKER_CERT"|
+      assert diff =~ ~s|System.get_env("SOOT_BROKER_KEY"|
+    end
+
+    test "is idempotent on runtime.exs" do
+      setup_project()
+      |> Igniter.compose_task("soot.install", [])
+      |> apply_igniter!()
+      |> Igniter.compose_task("soot.install", [])
+      |> assert_unchanged("config/runtime.exs")
+    end
+  end
+
   describe "running on a project without a router" do
     test "emits a warning rather than crashing" do
       igniter =
