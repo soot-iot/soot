@@ -90,7 +90,28 @@ contract bundle, and segment definition on every restart.
 
 **Not currently in `SPEC-2.md`.**
 
-### 3. Contract bundle signing only works with software CA keys
+### 3. Contract bundle signing only works with software CA keys — **in flight 2026-04-27**
+
+**Status:** Two stacked PRs land the fix.
+
+* [`soot-iot/ash_pki#2`](https://github.com/soot-iot/ash_pki/pull/2)
+  adds `AshPki.KeyStrategy.sign(descriptor, body, opts)` — implemented
+  for `Software` (`:public_key.sign/3`) and `Pkcs11` (engine-key
+  reference). `Imported` returns `:no_signing_capability`; `KMS`
+  returns `:not_implemented`. Tests cover the Software round-trip and
+  add a SoftHSM2-tagged round-trip in the existing `:pkcs11`
+  integration block.
+* [`soot-iot/soot_contracts#3`](https://github.com/soot-iot/soot_contracts/pull/3)
+  rewrites `Bundle.sign_body/2` to dispatch through the new callback.
+  Errors from the strategy bubble up as `ArgumentError` with the
+  underlying reason; the caller no longer assumes Software-only.
+  Depends on `ash_pki#2` landing first.
+
+Once both merge, HSM-backed CAs can sign bundles, and the v0.1
+phase-6 "HSM-backed CA keys shipped" claim becomes accurate
+end-to-end.
+
+Original finding for context:
 
 `soot_contracts/lib/soot_contracts/bundle.ex:200-209`:
 
@@ -120,8 +141,6 @@ publishing a bundle. The natural fix is to introduce a
 `KeyStrategy.sign(descriptor, body, digest_alg)` callback (or thread
 through one of the existing `sign_*` shapes) and route bundle signing
 through it instead of pattern-matching on `:software`.
-
-**Not currently in `SPEC-2.md`.**
 
 ---
 
@@ -171,8 +190,7 @@ real:
 * **AshPostgres seam across `soot_*`** — done (see Blocker 2 above).
   Pattern mirrors `ash_pki`: Spark extension + thin ETS default + app
   config knob. Phase 7 entry added in `SPEC-2.md`.
-* **HSM-aware bundle signing** — still open. Add a `sign(descriptor,
-  body, digest_alg)` callback to `AshPki.KeyStrategy` (or thread the
-  existing `sign_csr`-style code path) and have
-  `SootContracts.Bundle.sign_body/2` dispatch through it. Removes the
-  hardcoded `Software` match.
+* **HSM-aware bundle signing** — in flight (see Blocker 3 above).
+  `AshPki.KeyStrategy.sign/3` lands in `ash_pki#2`;
+  `SootContracts.Bundle.sign_body/2` rewrites in `soot_contracts#3`.
+  Removes the hardcoded `Software` match.
