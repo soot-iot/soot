@@ -34,9 +34,13 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
 
+  # Brokers are profile-gated: pick one with `--profile emqx` or
+  # `--profile mosquitto` (or `--profile all` to bring up both).
+  # The script defaults to emqx; SOOT_E2E_BROKER=mosquitto switches.
   emqx:
     image: emqx/emqx:5.8.0
     container_name: soot_e2e_emqx
+    profiles: ["emqx", "all"]
     environment:
       EMQX_ALLOW_ANONYMOUS: "true"
       EMQX_LOG__CONSOLE_HANDLER__LEVEL: warning
@@ -51,6 +55,26 @@ services:
     healthcheck:
       test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
       interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: soot_e2e_mosquitto
+    profiles: ["mosquitto", "all"]
+    # Anonymous + open by default. Real ACLs / mTLS get pushed in
+    # via mix soot.broker.gen_config + a bind mount in CI.
+    command:
+      - sh
+      - -c
+      - |
+        printf 'listener 1883\nallow_anonymous true\n' > /mosquitto/config/mosquitto.conf
+        exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf
+    ports:
+      - "127.0.0.1:${SOOT_E2E_MOSQUITTO_PORT:-21884}:1883"
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -t healthcheck -W 1 -E || true"]
+      interval: 5s
       timeout: 5s
       retries: 12
 

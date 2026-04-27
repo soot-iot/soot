@@ -49,6 +49,11 @@ DEVICE_LOG="$TMP/device.log"
 
 BROKER="${SOOT_E2E_BROKER:-emqx}"
 
+case "$BROKER" in
+  emqx|mosquitto) ;;
+  *) echo "SOOT_E2E_BROKER must be emqx or mosquitto, got: $BROKER" >&2; exit 2 ;;
+esac
+
 # Service ports — high host ports so the stack coexists with other
 # Postgres / EMQX / ClickHouse instances a developer might be running.
 # The container-internal ports stay standard.
@@ -56,6 +61,7 @@ export SOOT_E2E_POSTGRES_PORT="${SOOT_E2E_POSTGRES_PORT:-25432}"
 export SOOT_E2E_EMQX_MQTT_PORT="${SOOT_E2E_EMQX_MQTT_PORT:-21883}"
 export SOOT_E2E_EMQX_MQTTS_PORT="${SOOT_E2E_EMQX_MQTTS_PORT:-28883}"
 export SOOT_E2E_EMQX_DASH_PORT="${SOOT_E2E_EMQX_DASH_PORT:-28083}"
+export SOOT_E2E_MOSQUITTO_PORT="${SOOT_E2E_MOSQUITTO_PORT:-21884}"
 export SOOT_E2E_CH_HTTP_PORT="${SOOT_E2E_CH_HTTP_PORT:-28123}"
 export SOOT_E2E_CH_TCP_PORT="${SOOT_E2E_CH_TCP_PORT:-29000}"
 export SOOT_E2E_BACKEND_PORT="${SOOT_E2E_BACKEND_PORT:-24000}"
@@ -77,8 +83,8 @@ stage_setup() {
 
   mkdir -p "$TMP"
 
-  log "starting docker services (postgres, emqx, clickhouse)"
-  docker compose -f "$COMPOSE_FILE" up -d --wait
+  log "starting docker services (postgres, $BROKER, clickhouse)"
+  docker compose -f "$COMPOSE_FILE" --profile "$BROKER" up -d --wait
 
   log "waiting for postgres"
   for _ in $(seq 1 30); do
@@ -86,11 +92,26 @@ stage_setup() {
     sleep 1
   done
 
-  log "waiting for emqx (host port $SOOT_E2E_EMQX_DASH_PORT)"
-  for _ in $(seq 1 30); do
-    curl -sf -u admin:soot_e2e_admin "http://localhost:$SOOT_E2E_EMQX_DASH_PORT/api/v5/status" >/dev/null && break
-    sleep 1
-  done
+  case "$BROKER" in
+    emqx)
+      log "waiting for emqx (host port $SOOT_E2E_EMQX_DASH_PORT)"
+      for _ in $(seq 1 30); do
+        curl -sf -u admin:soot_e2e_admin "http://localhost:$SOOT_E2E_EMQX_DASH_PORT/api/v5/status" >/dev/null && break
+        sleep 1
+      done
+      ;;
+    mosquitto)
+      log "waiting for mosquitto (host port $SOOT_E2E_MOSQUITTO_PORT)"
+      for _ in $(seq 1 30); do
+        # Mosquitto has no HTTP probe — `nc` to the listener port is
+        # the closest equivalent.
+        if (echo > /dev/tcp/127.0.0.1/$SOOT_E2E_MOSQUITTO_PORT) 2>/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+      ;;
+  esac
 
   log "waiting for clickhouse (host port $SOOT_E2E_CH_HTTP_PORT)"
   for _ in $(seq 1 30); do
@@ -98,7 +119,7 @@ stage_setup() {
     sleep 1
   done
 
-  log "services up"
+  log "services up (broker=$BROKER)"
 }
 
 # --------------------------------------------------------------------
@@ -413,7 +434,7 @@ stage_teardown() {
   stage_stop_backend
 
   if [[ -f "$COMPOSE_FILE" ]]; then
-    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+    docker compose -f "$COMPOSE_FILE" --profile all down -v --remove-orphans 2>/dev/null || true
   fi
 
   if [[ -d "$TMP" && "${SOOT_E2E_KEEP_TMP:-0}" != "1" ]]; then
