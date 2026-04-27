@@ -44,13 +44,17 @@ golden path and reject the documented error branches, but several
 production-grade behaviors are stubs or absent:
 
 * `SootTelemetry.Writer.Noop` is the default writer. Production needs
-  a real ClickHouse writer over the `:ch` driver, with batching,
-  back-pressure, and retry semantics that the in-memory `Noop`
-  doesn't model.
-* The ingest plug treats the request body as opaque bytes. Real Arrow
-  IPC framing decode lets us validate column shape against the
-  declared schema before insert (rather than only relying on the
-  fingerprint header).
+  a real writer that bulk-loads the inbound Arrow batch into
+  ClickHouse, with batching, back-pressure, and retry semantics that
+  the in-memory `Noop` doesn't model. The leading candidate is
+  Arrow-native pass-through (ClickHouse HTTP with `FORMAT Arrow`, or
+  via ADBC / duxedo → ADBC) so the request body never has to be
+  column-decoded server-side.
+* The ingest plug treats the request body as opaque bytes and
+  forwards them. Server-side column-shape decoding is explicitly
+  deferred — the fingerprint header already declares schema, and a
+  column mismatch surfaces as a ClickHouse insert error. Revisit only
+  if a concrete validation gap appears in production.
 * `AshMqtt.Runtime.Client` has no reconnect or backoff. The operator
   wraps it in a `Supervisor` for restart but a misbehaving broker
   produces a tight reconnect loop.
@@ -62,8 +66,14 @@ production-grade behaviors are stubs or absent:
 The original spec §9 listed open questions; v0.2 picks the ones that
 need framework-level support rather than operator-level configuration:
 
-* **CBOR as a first-class default** for MQTT control payloads where
-  the rule engine doesn't need to introspect.
+* **JSON and CBOR as peer payload formats** for MQTT control
+  payloads. `payload_format` already accepts both per-extension; v0.2
+  makes the *set* of accepted formats a configuration option (default
+  `[:json, :cbor]`) so operators can narrow it without code changes.
+  Both formats stay first-class on the broker / admin / device
+  surfaces unless one is found to add meaningful weight (e.g. an
+  unwanted dep on the device side); no default flips between the two
+  — that decision waits for field data.
 * **Shadow conflict resolution** beyond per-top-level-key last-write-
   wins. AWS / Azure both have nuanced rules; we won't match either,
   but operators need a knob better than "last write wins" for cases
@@ -135,8 +145,8 @@ re-classified as in-scope / deferred / dropped for v0.2.
 
 | item                                                  | v0.2 |
 |-------------------------------------------------------|------|
-| Real Arrow IPC framing decode in `Plug.Ingest`        | in   |
-| ClickHouse `:ch`-driver writer (default, replaces `Noop`) | in |
+| Real Arrow IPC framing decode in `Plug.Ingest`        | defer (pass-through writer doesn't need it) |
+| Arrow-native ClickHouse writer (replaces `Noop`)      | in   |
 | Automatic backfill on schema change                   | defer (keep explicit per `SPEC.md` §5.4) |
 | Multi-region replication coordination                 | in (via `Distributed` table generation in DDL) |
 | Tiered storage / cold storage automation              | in (storage-policy emission from retention) |
@@ -194,10 +204,23 @@ level.
 ### 5.1 ClickHouse writer (replaces `Noop`)
 
 `SootTelemetry.Writer.ClickHouse` (new module, opt-in via the existing
-`config :soot_telemetry, :writer, …` knob). Implements the `Writer`
-behavior with:
+`config :soot_telemetry, :writer, …` knob). The writer is
+Arrow-native pass-through: the inbound Arrow IPC body is forwarded to
+ClickHouse without server-side column decoding. Transport candidates,
+decided in implementation:
 
-* A pool of `:ch` connections sized via `:pool_size` (default 4).
+* ClickHouse HTTP interface with `INSERT … FORMAT Arrow`. Cheapest to
+  integrate; an HTTP `POST` of the body bytes plus a SQL preamble.
+* ADBC ClickHouse driver — directly, or via duxedo's already-wired
+  ADBC surface so device path and server path can share the same
+  Arrow → ClickHouse code.
+* `:ch` driver. Available, but does not speak Arrow natively, so
+  using it forces server-side decoding that pass-through avoids.
+  Listed for completeness; not the default.
+
+Implements the `Writer` behavior with:
+
+* A pool of HTTP / ADBC connections sized via `:pool_size` (default 4).
 * A bounded mailbox per connection; ingest plug calls `write/1`
   asynchronously under the hood, with the synchronous `:ok` returned
   once the batch is enqueued.
@@ -210,33 +233,37 @@ behavior with:
 * Retry on transient ClickHouse errors (server-restart, deadlock)
   with exponential backoff capped at 30s; permanent errors
   (column-mismatch, schema-not-found) bypass the writer and surface
-  to the plug.
+  to the plug as `500` — the upstream fingerprint check catches the
+  common case where a device sends the wrong schema.
+
+Server-set fields (`ingest_ts`, `tenant_id`) are added at the SQL
+projection layer — `INSERT INTO … SELECT *, now() AS ingest_ts,
+$tenant_id AS tenant_id FROM input(<schema>) FORMAT Arrow` — so the
+writer never has to mutate the Arrow buffer.
 
 The writer is deliberately separate from the ingest plug so a future
 out-of-process ingest service can reuse it.
 
 ### 5.2 Arrow IPC decoding in `Plug.Ingest`
 
-Today the body is opaque bytes. v0.2 decodes the IPC framing to the
-extent needed to:
+**Deferred from v0.2.** The original sketch had the plug decoding
+Arrow IPC frames to validate column shape, row-count vs. sequence
+range, and to inject server-set fields. Pass-through to ClickHouse
+(§5.1) handles two of those without a decode step:
 
-1. Verify the inbound batch's schema matches the active schema's
-   fingerprint (we already check the header but can now validate the
-   actual column types).
-2. Reject batches whose row count is wildly inconsistent with the
-   declared sequence range.
-3. Project server-set fields (`ingest_ts`, `tenant_id`) without
-   round-tripping through a buffer.
+* Schema-fingerprint match is already enforced upstream of the
+  writer; column-shape mismatch surfaces as a ClickHouse insert
+  error and bubbles up as a `500` rather than a `400`. Acceptable
+  trade for not parsing Arrow on the hot path.
+* Server-set fields go into the SQL projection (§5.1), not the body.
+* Row-count vs. sequence-range inconsistency *can* be checked from
+  the IPC envelope without decoding columns; if we want this, it
+  lands as a small opt-in helper, not a required decode step.
 
-The Elixir Arrow ecosystem is thin; v0.2 picks the implementation
-based on what's healthiest at the time. Two candidates:
-
-* `:explorer` (DataFrame-shaped); transitively pulls Polars, heavy.
-* Hand-rolled IPC framing decoder over `:flatbuffers` + record
-  decoding into Erlang terms. Lean, but more upfront work.
-
-Decision deferred to the implementation phase; the writer behavior's
-seam is what isolates this choice.
+The Elixir Arrow ecosystem is also still thin — `:explorer`
+transitively pulls Polars, and a hand-rolled IPC decoder over
+`:flatbuffers` is real upfront work. Revisit when either the
+ecosystem matures or a production validation gap appears.
 
 ### 5.3 OTA via NervesHub
 
@@ -336,7 +363,6 @@ These are NOT in scope for v0.2 and shouldn't be slipped in:
 * Cross-cloud / cross-region active-active deployments. v0.2 covers
   multi-region read replicas; active-active is its own design phase.
 * A managed-cloud variant of any of the libraries.
-* Replacing AshPostgres as the OLTP default.
 
 ## 7. Build phases (v0.2)
 
@@ -346,15 +372,24 @@ HEAD of each repo.
 
 ### Phase 7 — Hot-path hardening
 
-* `SootTelemetry.Writer.ClickHouse` with `:ch` driver, batch coalescing,
-  back-pressure surface to the plug.
-* `Plug.Ingest` body decoding to the extent needed for type validation
-  + server-set field projection.
+* `SootTelemetry.Writer.ClickHouse` Arrow-native pass-through (§5.1)
+  with batch coalescing and back-pressure surface to the plug.
 * `AshMqtt.Runtime.Client` reconnect + backoff via a small state
   machine (idle → connecting → connected → backoff with capped
   exponential delay).
 * `SootContracts.Plug.WellKnown` rate limit (per cert fingerprint).
 * `AshPki.Plug.MTLS` verified-header production hardening (§5.6).
+* **AshPostgres seam across the OLTP libs** — landed. Every
+  `soot_core` / `soot_telemetry` / `soot_contracts` / `soot_segments`
+  resource now ships as a Spark `Ash.Resource` extension under
+  `<Lib>.Resource.<Name>` plus a thin `Ash.DataLayer.Ets` default at
+  `<Lib>.<Name>`. Consumers declare their own
+  `AshPostgres.DataLayer`-backed module + `postgres do … end` block,
+  apply the extension, and register it via app config (`config
+  :soot_core, device: MyApp.Device`, etc.). Library tests stay on the
+  ETS defaults; consumer integration tests in the `soot` umbrella
+  cover the AshPostgres path. The PKCS11/KMS bundle-signing fix
+  (Problem 3 in `PROBLEMS.md`) remains open.
 
 Demo target: a synthetic load test against ClickHouse that drives the
 ingest endpoint above v0.1's stated ceiling and stays stable.
@@ -414,8 +449,10 @@ SoftHSM2 + ClickHouse via testcontainers, gated behind an
 Carried-over open questions from `SPEC.md` §9 that are explicitly
 *not* picked up in v0.2:
 
-* CBOR vs JSON default for control payloads. Make it a knob in v0.2,
-  pick a default in v0.3 once we have field data.
+* Whether to recommend a single `payload_format` default (JSON or
+  CBOR) instead of leaving the accepted-formats set to operator
+  config. Both are first-class peers in v0.2; the recommendation
+  waits for field data.
 * Cross-tenant device handoff (manufacturing-line tenant → operator
   tenant). Pre-provisioned import covers static cases; dynamic
   handoff is its own design phase.
