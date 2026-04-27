@@ -161,21 +161,11 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     for i <- 1..count do
       serial = "DEMO-#{String.pad_leading(Integer.to_string(i), 4, "0")}"
 
-      case SootCore.Device.create_unprovisioned(tenant.id, serial) do
-        {:ok, device} ->
-          Mix.shell().info("    create  Device #{serial}")
-          device
-
-        {:error, _} ->
-          case SootCore.Device.get_by_serial(tenant.id, serial) do
-            {:ok, device} ->
-              Mix.shell().info("    exists  Device #{serial}")
-              device
-
-            _ ->
-              Mix.raise("Failed to create device #{serial}.")
-          end
-      end
+      find_or_create(
+        fn -> SootCore.Device.create_unprovisioned(tenant.id, serial) end,
+        fn -> SootCore.Device.get_by_serial(tenant.id, serial) end,
+        "Device #{serial}"
+      )
     end
   end
 
@@ -188,14 +178,12 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
       }
 
       shadow =
-        case SootCore.DeviceShadow.create(device.id) do
-          {:ok, shadow} -> shadow
-          {:error, _} ->
-            case SootCore.DeviceShadow.for_device(device.id) do
-              {:ok, shadow} -> shadow
-              _ -> Mix.raise("Failed to create shadow for device #{device.id}.")
-            end
-        end
+        find_or_create(
+          fn -> SootCore.DeviceShadow.create(device.id) end,
+          fn -> SootCore.DeviceShadow.for_device(device.id) end,
+          "Shadow for device #{device.id}",
+          quiet: true
+        )
 
       case SootCore.DeviceShadow.update_desired(shadow, desired) do
         {:ok, _updated} ->
@@ -212,28 +200,67 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
   defp seed_admin_user(app_module, email, password) do
     resource = Module.concat([app_module, "Accounts", "User"])
 
-    if !Code.ensure_loaded?(resource) do
-      Mix.shell().info("    skip    Admin user (#{inspect(resource)} not present — run ash_authentication.install first)")
-      :skipped
+    if Code.ensure_loaded?(resource) do
+      register_admin_user(resource, email, password)
     else
-      attrs = %{email: email, password: password, password_confirmation: password}
+      Mix.shell().info(
+        "    skip    Admin user (#{inspect(resource)} not present — run ash_authentication.install first)"
+      )
 
-      case call_register(resource, attrs) do
-        {:ok, user} ->
-          Mix.shell().info("    create  Admin user #{email}")
-          user
+      :skipped
+    end
+  end
 
-        {:error, _} ->
-          case lookup_existing(resource, email: email) do
-            {:ok, user} ->
-              Mix.shell().info("    exists  Admin user #{email}")
-              user
+  defp register_admin_user(resource, email, password) do
+    attrs = %{email: email, password: password, password_confirmation: password}
 
-            _ ->
-              Mix.shell().info("    skip    Admin user (registration unavailable)")
-              :skipped
-          end
-      end
+    case call_register(resource, attrs) do
+      {:ok, user} ->
+        Mix.shell().info("    create  Admin user #{email}")
+        user
+
+      {:error, _} ->
+        find_existing_admin_user(resource, email)
+    end
+  end
+
+  defp find_existing_admin_user(resource, email) do
+    case lookup_existing(resource, email: email) do
+      {:ok, user} ->
+        Mix.shell().info("    exists  Admin user #{email}")
+        user
+
+      _ ->
+        Mix.shell().info("    skip    Admin user (registration unavailable)")
+        :skipped
+    end
+  end
+
+  # Tries `create_fun.()` first, falls back to `find_fun.()` on
+  # `{:error, _}`. Logs a "create" / "exists" line keyed on `label`
+  # (suppress with `quiet: true`). Raises if neither path returns
+  # `{:ok, _}`.
+  defp find_or_create(create_fun, find_fun, label, opts \\ []) do
+    quiet? = Keyword.get(opts, :quiet, false)
+
+    case create_fun.() do
+      {:ok, value} ->
+        unless quiet?, do: Mix.shell().info("    create  #{label}")
+        value
+
+      {:error, _} ->
+        find_existing!(find_fun, label, quiet?)
+    end
+  end
+
+  defp find_existing!(find_fun, label, quiet?) do
+    case find_fun.() do
+      {:ok, value} ->
+        unless quiet?, do: Mix.shell().info("    exists  #{label}")
+        value
+
+      _ ->
+        Mix.raise("Failed to create #{label}.")
     end
   end
 
