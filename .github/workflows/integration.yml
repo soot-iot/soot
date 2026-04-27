@@ -133,6 +133,8 @@ jobs:
             python3 \
             libmnl-dev \
             libssl-dev \
+            libconfuse-dev \
+            libarchive-dev \
             automake \
             autoconf \
             build-essential \
@@ -143,6 +145,16 @@ jobs:
           # by various Nerves transitive C deps. ClickHouse client
           # is unnecessary on the host — the script shells through
           # docker exec for any CH commands.
+
+      - name: Install fwup
+        run: |
+          # fwup is the Nerves firmware packager; it isn't in apt.
+          # Install from the upstream .deb release.
+          FWUP_VERSION="1.13.0"
+          wget -q -O /tmp/fwup.deb \
+            "https://github.com/fwup-home/fwup/releases/download/v${FWUP_VERSION}/fwup_${FWUP_VERSION}_amd64.deb"
+          sudo dpkg -i /tmp/fwup.deb || sudo apt-get install -fy
+          fwup --version
 
       - name: Set up BEAM
         uses: erlef/setup-beam@v1
