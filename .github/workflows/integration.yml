@@ -114,17 +114,25 @@ jobs:
           repository: soot-iot/soot_device_protocol
           path: soot_device_protocol
 
-      - name: Install OS deps (qemu, postgres-client)
+      - name: Install OS deps (qemu, nerves build deps, postgres-client)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             qemu-system-arm \
             postgresql-client \
-            python3
-          # ClickHouse client (dpkg from official repo)
-          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv E0C56BD4 || true
-          # Use docker exec instead of installing clickhouse-client on the host:
-          # the script already shells through docker exec for ClickHouse work.
+            python3 \
+            libmnl-dev \
+            libssl-dev \
+            automake \
+            autoconf \
+            build-essential \
+            pkg-config
+          # libmnl-dev is needed by nerves_uevent (compiled at
+          # `mix deps.compile` time on the host target before
+          # firmware crossbuilds). The other build tools are needed
+          # by various Nerves transitive C deps. ClickHouse client
+          # is unnecessary on the host — the script shells through
+          # docker exec for any CH commands.
 
       - name: Set up BEAM
         uses: erlef/setup-beam@v1
