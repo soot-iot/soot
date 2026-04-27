@@ -75,43 +75,73 @@ jobs:
       # what `SOOT_E2E_WORKSPACE` points at; we lay the per-library
       # repos out there as siblings, the same way local development
       # has them.
+      #
+      # All soot-iot/* repos are private, so the default GITHUB_TOKEN
+      # (scoped to this repo only) cannot fetch them. The workflow
+      # needs `secrets.SOOT_BOT_TOKEN` — a PAT or fine-grained
+      # access token with `contents: read` on every soot-iot/*
+      # repository. Set it once at the org level
+      # (https://github.com/organizations/soot-iot/settings/secrets/actions)
+      # so every repo's CI can use it.
+      - name: Verify SOOT_BOT_TOKEN is configured
+        env:
+          SOOT_BOT_TOKEN: ${{ secrets.SOOT_BOT_TOKEN }}
+        run: |
+          if [[ -z "$SOOT_BOT_TOKEN" ]]; then
+            echo "::error::SOOT_BOT_TOKEN secret not set. The integration"
+            echo "::error::workflow needs cross-repo read access to clone the"
+            echo "::error::soot-iot/* private libraries. Create a PAT with"
+            echo "::error::contents: read on soot-iot/* and add it as the"
+            echo "::error::SOOT_BOT_TOKEN secret at the org level."
+            exit 1
+          fi
+
       - name: Checkout per-library repos
         uses: actions/checkout@v4
         with:
           repository: soot-iot/ash_pki
           path: ash_pki
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/ash_mqtt
           path: ash_mqtt
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/soot_core
           path: soot_core
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/soot_telemetry
           path: soot_telemetry
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/soot_segments
           path: soot_segments
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/soot_contracts
           path: soot_contracts
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/soot_admin
           path: soot_admin
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/soot_device
           path: soot_device
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
       - uses: actions/checkout@v4
         with:
           repository: soot-iot/soot_device_protocol
           path: soot_device_protocol
+          token: ${{ secrets.SOOT_BOT_TOKEN }}
 
       - name: Install OS deps (qemu, postgres-client)
         run: |
