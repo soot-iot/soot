@@ -421,6 +421,21 @@ stage_boot_and_test() {
   log "=== boot-and-test ==="
   cd "$DEVICE_DIR"
 
+  # The device's OTP application boots when `mix test` starts, even
+  # for tests that just drive QEMU. Without these env vars the
+  # device runtime crashes during application start (storage path
+  # missing, contract URL unset, etc.). Point them at writable /
+  # reachable defaults — the test process won't actually use the
+  # host device runtime; QEMU has its own.
+  mkdir -p /tmp/soot_device_persistence
+
+  export DEVICE_PERSISTENCE_DIR="/tmp/soot_device_persistence"
+  export DEVICE_CONTRACT_URL="http://localhost:$SOOT_E2E_BACKEND_PORT/.well-known/soot/contract"
+  export DEVICE_ENROLL_URL="http://localhost:$SOOT_E2E_BACKEND_PORT/enroll"
+  export DEVICE_SERIAL="DEMO-000001"
+  export SOOT_BOOTSTRAP_CERT="$BACKEND_DIR/priv/pki/demo-device-001.cert.pem"
+  export SOOT_BOOTSTRAP_KEY="$BACKEND_DIR/priv/pki/demo-device-001.key.pem"
+
   log "mix test --include qemu --include e2e"
   mix test --include qemu --include e2e
 }
