@@ -114,6 +114,16 @@ jobs:
           repository: soot-iot/soot_device_protocol
           path: soot_device_protocol
 
+      # Nerves projects' generated config.exs reads ~/.ssh/*.pub at
+      # compile time to populate authorized_keys for the firmware's
+      # ssh subsystem. Without one, `mix deps.get` for the device
+      # bails. The key never leaves the runner; it exists only to
+      # make the generated config valid.
+      - name: Generate SSH key for Nerves authorized_keys
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "soot-e2e@runner"
+
       - name: Install OS deps (qemu, nerves build deps, postgres-client)
         run: |
           sudo apt-get update
