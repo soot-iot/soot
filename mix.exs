@@ -67,13 +67,13 @@ defmodule Soot.MixProject do
 
   defp deps do
     [
-      {:ash_pki, path: "../ash_pki"},
-      {:ash_mqtt, path: "../ash_mqtt"},
-      {:soot_core, path: "../soot_core"},
-      {:soot_telemetry, path: "../soot_telemetry"},
-      {:soot_segments, path: "../soot_segments"},
-      {:soot_contracts, path: "../soot_contracts"},
-      {:soot_admin, path: "../soot_admin"},
+      {:ash_pki, github: "soot-iot/ash_pki", branch: "main", override: true},
+      {:ash_mqtt, github: "soot-iot/ash_mqtt", branch: "main", override: true},
+      {:soot_core, github: "soot-iot/soot_core", branch: "main", override: true},
+      {:soot_telemetry, github: "soot-iot/soot_telemetry", branch: "main", override: true},
+      {:soot_segments, github: "soot-iot/soot_segments", branch: "main", override: true},
+      {:soot_contracts, github: "soot-iot/soot_contracts", branch: "main", override: true},
+      {:soot_admin, github: "soot-iot/soot_admin", branch: "main", override: true},
       {:igniter, "~> 0.6", optional: true},
       {:jason, "~> 1.4"},
       # `mix soot.broker.push_emqx` POSTs the rendered EMQX bundle
