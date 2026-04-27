@@ -120,16 +120,25 @@ if Code.ensure_loaded?(Igniter) do
 
     defp compose_children(igniter, argv) do
       Enum.reduce(@child_installers, igniter, fn task, igniter ->
-        if task_available?(task) do
-          Igniter.compose_task(igniter, task, argv)
-        else
-          Igniter.add_warning(igniter, """
-          Skipping `mix #{task}` — the task is not available.
+        cond do
+          not task_available?(task) ->
+            Igniter.add_warning(igniter, """
+            Skipping `mix #{task}` — the task is not available.
 
-          This usually means the corresponding library has not yet
-          published an installer. Re-run `mix igniter.install soot`
-          once the library is updated, or run the installer manually.
-          """)
+            This usually means the corresponding library has not yet
+            published an installer. Re-run `mix igniter.install soot`
+            once the library is updated, or run the installer manually.
+            """)
+
+          child_already_installed?(igniter, task) ->
+            Igniter.add_notice(igniter, """
+            Skipping `mix #{task}` — already installed (marker module
+            present). Re-run that installer directly if you need to
+            re-apply it.
+            """)
+
+          true ->
+            Igniter.compose_task(igniter, task, argv)
         end
       end)
     end
@@ -137,6 +146,48 @@ if Code.ensure_loaded?(Igniter) do
     defp task_available?(task) do
       Mix.Task.get(task) != nil
     end
+
+    # Each child installer leaves at least one operator-namespaced
+    # module in `lib/`. If we see the marker module, the child has
+    # already been run (probably via `mix igniter.new --install <child>`)
+    # and re-composing it here would explode on "File already exists".
+    #
+    # `:app` markers live under the operator's app namespace
+    # (e.g. `Backend.Accounts.User`); `:web` markers live under the
+    # operator's web namespace (e.g. `BackendWeb.AuthController`).
+    defp child_already_installed?(igniter, task) do
+      case child_marker_module(task) do
+        nil ->
+          false
+
+        {:app, suffix} ->
+          module = Igniter.Project.Module.module_name(igniter, suffix)
+          {exists?, _igniter} = Igniter.Project.Module.module_exists(igniter, module)
+          exists?
+
+        {:web, suffix} ->
+          module = Igniter.Libs.Phoenix.web_module_name(igniter, suffix)
+          {exists?, _igniter} = Igniter.Project.Module.module_exists(igniter, module)
+          exists?
+      end
+    end
+
+    @child_markers %{
+      "ash_authentication.install" => {:app, "Accounts.User"},
+      "ash_authentication_phoenix.install" => {:web, "AuthController"},
+      "ash_postgres.install" => {:app, "Repo"},
+      "ash_phoenix.install" => nil,
+      "ash.install" => nil,
+      "ash_pki.install" => {:app, "Pki"},
+      "soot_core.install" => {:app, "Devices"},
+      "ash_mqtt.install" => nil,
+      "soot_telemetry.install" => {:app, "Telemetry"},
+      "soot_segments.install" => {:app, "Segments"},
+      "soot_contracts.install" => {:app, "Contracts"},
+      "soot_admin.install" => {:web, "AdminLayouts"}
+    }
+
+    defp child_marker_module(task), do: Map.get(@child_markers, task)
 
     # When `--example` is set, generate the example device shadow
     # resource in the operator's project. Demonstrates the three
