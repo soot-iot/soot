@@ -194,3 +194,20 @@ real:
   `AshPki.KeyStrategy.sign/3` lands in `ash_pki#2`;
   `SootContracts.Bundle.sign_body/2` rewrites in `soot_contracts#3`.
   Removes the hardcoded `Software` match.
+
+---
+
+## Carry-over tech debt
+
+* **`override: true` on github-branch deps is redundant** — landed
+  2026-04-28 as part of the path-dep → github migration. While
+  individual repo PRs were in flight, transitive deps still carried
+  pre-merge `path:` declarations, so top-level mix.exs files needed
+  `override: true` to win the dep-resolution conflict. Now that every
+  repo's `main` declares its sibling deps as
+  `{:dep, github: "soot-iot/dep", branch: "main"}`, the override is
+  load-bearing nowhere — both sides of the resolution match by source
+  type. Affects `soot_telemetry`, `soot_segments`, `soot_admin`,
+  `soot_contracts`, `soot`. Removing the keyword is a no-op cleanup;
+  leaving it is harmless. Worth a sweep when one of those mix.exs
+  files is touched for an unrelated reason.
