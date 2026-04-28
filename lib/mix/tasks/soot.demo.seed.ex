@@ -245,7 +245,7 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
 
     case create_fun.() do
       {:ok, value} ->
-        unless quiet?, do: Mix.shell().info("    create  #{label}")
+        if !quiet?, do: Mix.shell().info("    create  #{label}")
         value
 
       {:error, _} ->
@@ -256,7 +256,7 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
   defp find_existing!(find_fun, label, quiet?) do
     case find_fun.() do
       {:ok, value} ->
-        unless quiet?, do: Mix.shell().info("    exists  #{label}")
+        if !quiet?, do: Mix.shell().info("    exists  #{label}")
         value
 
       _ ->
@@ -292,7 +292,10 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
   defp run_simulator do
     Stream.repeatedly(fn ->
       Process.sleep(2_000)
-      Mix.shell().info("    simulator  tick (real device sim lands once soot_nerves_example is wired up)")
+
+      Mix.shell().info(
+        "    simulator  tick (real device sim lands once soot_nerves_example is wired up)"
+      )
     end)
     |> Enum.each(& &1)
   end

@@ -98,7 +98,7 @@ defmodule Mix.Tasks.Soot.Broker.PushEmqx do
   end
 
   defp read_bundle!(path) do
-    unless File.exists?(path) do
+    if !File.exists?(path) do
       Mix.raise("""
       EMQX bundle not found at #{path}.
 
