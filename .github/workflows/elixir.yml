@@ -31,9 +31,13 @@ jobs:
           path: |
             deps
             _build
-          key: mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.lock') }}
+          # Include mix.exs in the cache key — compile-time
+          # `Code.ensure_loaded?` results depend on dep set, which Mix
+          # can't track for incremental compile, so a cached _build
+          # from a different mix.exs will silently produce stale BEAMs.
+          key: mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.exs', '**/mix.lock') }}
           restore-keys: |
-            mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-
+            mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('**/mix.exs') }}-
 
       - name: Restore PLT cache
         uses: actions/cache@v4
