@@ -450,6 +450,13 @@ if Code.ensure_loaded?(Igniter) do
             * lib/<app>/devices/device_shadow.ex           shadow resource
               (weather_enabled / weather_interval_s / label)
 
+          The default :cpu / :memory / :disk telemetry streams are
+          always-on (in soot_telemetry.install) and pair with the
+          device-side `<App>.Telemetry.SystemHealth` module that
+          `mix soot_device.install --example` generates on the Nerves
+          side. Field names match across both halves; data lands in
+          ClickHouse without further mapping.
+
           `mix soot.demo.seed` will run after `mix ash.setup` to
           create the demo tenant, an admin user, and 5 :operational
           devices with pre-populated shadow desired state.
