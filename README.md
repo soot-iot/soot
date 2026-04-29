@@ -47,7 +47,7 @@ mix archive.install hex phx_new
 
 mix igniter.new my_iot \
     --with phx.new \
-    --with-args="--no-mailer --database postgres" \
+    --with-args="--database postgres" \
     --install soot@github:soot-iot/soot \
     --install db_connection@2.9.0 \
     --yes
