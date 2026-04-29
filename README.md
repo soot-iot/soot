@@ -44,12 +44,22 @@ broker config, ClickHouse migrations.
 ```sh
 mix archive.install hex igniter_new
 mix archive.install hex phx_new
+
+# 1. Generate the Phoenix shell.
 mix igniter.new my_iot \
-    --install soot \
     --with phx.new \
     --with-args="--no-mailer --database postgres"
 
 cd my_iot
+
+# 2. Add a db_connection override to mix.exs deps (see "Known wart"
+#    below) — required because :ch (ClickHouse driver) pins
+#    db_connection ~> 2.9.0 and Phoenix's lock floats to 2.10.x.
+#       {:db_connection, "~> 2.9.0", override: true},
+
+# 3. Install soot. Until soot ships on hex, install from github.
+mix igniter.install soot@github:soot-iot/soot --yes
+
 mix ash.setup           # apply migrations + extension setup
 mix soot.demo.seed      # optional: plant demo tenant + 25 devices + admin user
 mix phx.server
@@ -61,9 +71,144 @@ the seed task printed. Device-facing endpoints (`/enroll`, `/ingest`,
 
 `mix igniter.install soot` is the umbrella; it composes per-library
 installers (`ash_pki.install`, `soot_core.install`, `soot_admin.install`,
-…) in the right order. See [`UI-SPEC.md`](UI-SPEC.md) for the full
-design and [`UI-SPEC.md` §4](UI-SPEC.md) for the per-installer
-responsibility table.
+…) in the right order. Each transitive soot library is declared as
+`github: "soot-iot/<lib>", branch: "main", override: true` in soot's
+`mix.exs`, so the single `--install soot@github:…` flag drags the whole
+framework in without enumerating siblings. See
+[`UI-SPEC.md`](UI-SPEC.md) for the full design and [`UI-SPEC.md`
+§4](UI-SPEC.md) for the per-installer responsibility table.
+
+### Known wart: `db_connection`
+
+`soot_telemetry` depends on `:ch` (the ClickHouse driver), and `ch
+0.7.x` pins `db_connection ~> 2.9.0`. A fresh Phoenix project locks
+`db_connection 2.10.x` via Postgrex, so `mix deps.get` fails resolution
+the moment soot is added unless the operator pins `db_connection`
+themselves. Add this line to the consumer's `mix.exs` deps and re-run
+`mix deps.get`:
+
+```elixir
+{:db_connection, "~> 2.9.0", override: true},
+```
+
+The fix lives in the consumer's `mix.exs` (not soot's) because Mix only
+honours `override: true` at the top level. Once `ch` widens its
+constraint upstream — see <https://github.com/plausible/ch> — this step
+goes away.
+
+## Try it locally (QEMU device + example backend)
+
+The Quickstart above is the right path for an operator generating a
+new project. For *framework* development — exercising the full stack
+end-to-end against your in-progress sibling repos — the canonical
+local reproducer is
+[`scripts/integration_e2e.sh`](scripts/integration_e2e.sh). It brings
+up Postgres + EMQX (or Mosquitto) + ClickHouse in Docker, generates a
+fresh Phoenix backend wired to soot via `path:` deps pointing at the
+local working trees, seeds it, starts it, generates a Nerves device
+project, builds `qemu_aarch64` firmware, boots it under QEMU, and runs
+the end-to-end ExUnit assertions against the running backend.
+
+Use the script when you want changes in `../soot_telemetry`,
+`../ash_pki`, etc. picked up in the same edit-compile cycle as the
+generated backend; use the Quickstart's `--install soot@github:…` form
+when you want to verify the actual operator-facing flow.
+
+### Prerequisites
+
+* Elixir / Erlang (whatever the repo's `mix.exs` requires)
+* `docker` with Compose v2 (`docker compose ...`)
+* `qemu-system-aarch64` (Debian/Ubuntu: `apt install qemu-system-arm`)
+* Nerves host prerequisites — see
+  <https://hexdocs.pm/nerves/installation.html>
+
+The script aborts early if any of these are missing.
+
+### One-command run
+
+```sh
+cd soot
+./scripts/integration_e2e.sh all
+```
+
+Stages run in order: `setup → gen-backend → seed → start-backend →
+gen-device → build-firmware → boot-and-test → stop-backend`. Cold runs
+take ~15–20 min — the first firmware build pulls a ~300 MB Nerves system;
+later runs reuse the toolchain cache.
+
+### Iterating on one piece
+
+Each stage is independently runnable, which is the point — iterate
+without re-running the whole pipeline:
+
+```sh
+./scripts/integration_e2e.sh setup           # docker compose up
+./scripts/integration_e2e.sh gen-backend     # mix igniter.new + soot.install
+./scripts/integration_e2e.sh seed            # ash_pki.init + ash.setup + soot.demo.seed
+./scripts/integration_e2e.sh start-backend   # mix phx.server (background)
+./scripts/integration_e2e.sh gen-device      # mix nerves.new + soot_device.install
+./scripts/integration_e2e.sh build-firmware  # MIX_TARGET=qemu_aarch64 mix firmware
+./scripts/integration_e2e.sh boot-and-test   # mix test --include qemu --include e2e
+./scripts/integration_e2e.sh stop-backend
+./scripts/integration_e2e.sh teardown        # docker compose down -v + rm tmp dirs
+```
+
+Generated projects land under `/tmp/soot_e2e/{backend,device}` — both are
+real Phoenix / Nerves projects you can `cd` into and poke at directly.
+Set `SOOT_E2E_KEEP_TMP=1` to preserve them across `teardown`.
+
+### Useful environment overrides
+
+| var                     | default          | effect                                          |
+|-------------------------|------------------|-------------------------------------------------|
+| `SOOT_E2E_TMP`          | `/tmp/soot_e2e`  | Where the generated projects live.              |
+| `SOOT_E2E_BROKER`       | `emqx`           | `emqx` or `mosquitto`.                          |
+| `SOOT_E2E_BACKEND_PORT` | `24000`          | Phoenix HTTP port on the host.                  |
+| `SKIP_FIRMWARE`         | (unset)          | `=1` skips the device + firmware + boot stages. |
+| `SOOT_E2E_KEEP_TMP`     | `0`              | `=1` preserves `/tmp/soot_e2e` after teardown.  |
+
+Host ports for the docker stack are deliberately non-default
+(`SOOT_E2E_POSTGRES_PORT=25432`, `SOOT_E2E_EMQX_MQTT_PORT=21883`,
+`SOOT_E2E_CH_HTTP_PORT=28123`, …) so the reproducer coexists with any
+local services a dev already has running. See
+[`scripts/docker-compose.e2e.yml`](scripts/docker-compose.e2e.yml) for
+the full set.
+
+### Poking at the running stack
+
+Once `start-backend` (and optionally `boot-and-test`) has run:
+
+* Backend HTTP: <http://localhost:24000/> — `/admin` is the LiveView UI;
+  the `seed` stage prints the admin credentials it created.
+* Device-facing endpoints (`/enroll`, `/ingest`,
+  `/.well-known/soot/contract`) sit behind the mTLS pipeline and are
+  exercised from inside QEMU during `boot-and-test`.
+* EMQX dashboard: <http://localhost:28083/> (admin / `soot_e2e_admin`).
+* ClickHouse HTTP: <http://localhost:28123/> (`soot:soot`).
+* QEMU console: the firmware boots with cookie
+  `soot_nerves_example_cookie` and pins Erlang distribution to host port
+  `9100`. See
+  [`soot_nerves_example/README.md`](../soot_nerves_example/README.md)
+  for the `Node.connect/1` recipe and the standalone launcher
+  (`scripts/run_qemu.sh`) — useful when you want to boot the firmware
+  without going through the e2e harness.
+
+To iterate on the backend half only — installer chain, seeds, admin UI —
+run the backend stages by hand and leave the backend up:
+
+```sh
+./scripts/integration_e2e.sh setup
+./scripts/integration_e2e.sh gen-backend
+./scripts/integration_e2e.sh seed
+./scripts/integration_e2e.sh start-backend
+# ... iterate against http://localhost:24000 ...
+./scripts/integration_e2e.sh stop-backend
+./scripts/integration_e2e.sh teardown
+```
+
+`SKIP_FIRMWARE=1 ./scripts/integration_e2e.sh all` runs the same
+backend-half stages then stops the backend — handy for CI and for
+verifying the installer chain in isolation.
 
 ## Deployment (manual reference)
 
