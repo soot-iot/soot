@@ -169,7 +169,7 @@ testing half the wire.
     mix igniter.new soot_e2e \
         --install soot \
         --with phx.new \
-        --with-args="--no-mailer --database postgres" \
+        --with-args="--database postgres" \
         --yes
 ```
 

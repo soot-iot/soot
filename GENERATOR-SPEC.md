@@ -56,7 +56,7 @@ mix archive.install hex phx_new
 mix igniter.new my_iot \
     --install soot \
     --with phx.new \
-    --with-args="--no-mailer --database postgres"
+    --with-args="--database postgres"
 cd my_iot
 mix ash.setup
 mix phx.server
@@ -66,7 +66,7 @@ mix phx.server
 
 ```sh
 mix igniter.new my_iot --install soot --with phx.new \
-    --with-args="--no-mailer --database postgres" \
+    --with-args="--database postgres" \
     --no-example
 ```
 

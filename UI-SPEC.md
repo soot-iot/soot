@@ -72,7 +72,7 @@ mix archive.install hex phx_new
 mix igniter.new my_iot \
     --install soot \
     --with phx.new \
-    --with-args="--no-mailer --database postgres"
+    --with-args="--database postgres"
 cd my_iot
 mix ash.setup
 mix soot.demo.seed   # optional
@@ -82,7 +82,7 @@ mix phx.server
 What happens, in order:
 
 1. `mix igniter.new my_iot --with phx.new` invokes
-   `mix phx.new my_iot --no-mailer --database postgres --install`
+   `mix phx.new my_iot --database postgres --install`
    (the `--install` flag tells `phx.new` to skip the post-generation
    prompt; `igniter.new` injects it automatically when `--with` is
    `phx.new`).
@@ -501,7 +501,7 @@ generator.
 Each library's installer ships an integration test that:
 
 1. Creates a fresh project with `mix igniter.new test_app --with phx.new
-   --with-args="--no-mailer --database postgres"` in a tmp dir.
+   --with-args="--database postgres"` in a tmp dir.
 2. Runs `mix igniter.install <lib>` and asserts the expected files
    exist with the expected anchor lines.
 3. Runs `mix compile` and asserts it succeeds.
@@ -580,7 +580,7 @@ ships.
 - **DaisyUI default vs opt-in.** `phx.new` ships vanilla Tailwind.
   `ash_authentication_phoenix` switches to DaisyUI overrides if the
   vendor file is present. Cinder's documented theming story may
-  differ. Should `--with-args="--no-mailer ... --tailwind-daisyui"` be
+  differ. Should `--with-args="... --tailwind-daisyui"` be
   the recommended invocation, or should we let the operator opt in
   later?
 - **Single endpoint vs split endpoints by default.** §5 picks single

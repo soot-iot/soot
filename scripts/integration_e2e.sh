@@ -144,7 +144,7 @@ stage_gen_backend() {
   mix igniter.new "$(basename "$BACKEND_DIR")" \
       --install ash,ash_postgres,ash_phoenix,ash_authentication,ash_authentication_phoenix \
       --with phx.new \
-      --with-args="--no-mailer --database postgres" \
+      --with-args="--database postgres" \
       --yes
 
   cd "$BACKEND_DIR"

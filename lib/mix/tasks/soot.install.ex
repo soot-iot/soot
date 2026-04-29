@@ -25,7 +25,7 @@ defmodule Mix.Tasks.Soot.Install.Docs do
     mix igniter.new my_iot \\
         --install soot \\
         --with phx.new \\
-        --with-args="--no-mailer --database postgres"
+        --with-args="--database postgres"
     cd my_iot
     mix ash.setup
     mix soot.demo.seed   # optional
