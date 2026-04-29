@@ -19,11 +19,17 @@ defmodule Mix.Tasks.Soot.Install.Docs do
 
     ## Canonical bootstrap (from a clean machine)
 
+    `:ash_postgres` is an *optional* dep of `:ash_authentication` so
+    mix won't pull it transitively, and `soot_core.install` generates
+    resources backed by `AshPostgres.DataLayer` — list ash_postgres
+    explicitly under `--install` so it lands in `mix.exs` before the
+    soot installers run.
+
     ```bash
     mix archive.install hex igniter_new
     mix archive.install hex phx_new
     mix igniter.new my_iot \\
-        --install soot \\
+        --install ash_postgres,soot \\
         --with phx.new \\
         --with-args="--database postgres"
     cd my_iot

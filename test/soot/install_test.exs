@@ -76,6 +76,16 @@ defmodule Mix.Tasks.Soot.InstallTest do
       assert info.aliases == [y: :yes, e: :example]
       assert info.group == :soot
     end
+
+    test "documents the ash_postgres caveat in long_doc" do
+      # `:ash_postgres` is an optional dep of `:ash_authentication` so
+      # mix won't pull it transitively, and `soot_core.install`
+      # generates AshPostgres-backed resources. The canonical install
+      # command in long_doc must list it explicitly so operators get a
+      # working build out of the box.
+      assert Mix.Tasks.Soot.Install.Docs.long_doc() =~
+               "--install ash_postgres,soot"
+    end
   end
 
   describe "router patching" do
