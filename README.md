@@ -45,21 +45,14 @@ broker config, ClickHouse migrations.
 mix archive.install hex igniter_new
 mix archive.install hex phx_new
 
-# 1. Generate the Phoenix shell.
 mix igniter.new my_iot \
     --with phx.new \
-    --with-args="--no-mailer --database postgres"
+    --with-args="--no-mailer --database postgres" \
+    --install soot@github:soot-iot/soot \
+    --install db_connection@2.9.0 \
+    --yes
 
 cd my_iot
-
-# 2. Add a db_connection override to mix.exs deps (see "Known wart"
-#    below) — required because :ch (ClickHouse driver) pins
-#    db_connection ~> 2.9.0 and Phoenix's lock floats to 2.10.x.
-#       {:db_connection, "~> 2.9.0", override: true},
-
-# 3. Install soot. Until soot ships on hex, install from github.
-mix igniter.install soot@github:soot-iot/soot --yes
-
 mix ash.setup           # apply migrations + extension setup
 mix soot.demo.seed      # optional: plant demo tenant + 25 devices + admin user
 mix phx.server
@@ -78,23 +71,17 @@ framework in without enumerating siblings. See
 [`UI-SPEC.md`](UI-SPEC.md) for the full design and [`UI-SPEC.md`
 §4](UI-SPEC.md) for the per-installer responsibility table.
 
-### Known wart: `db_connection`
+### Why the extra `--install db_connection@2.9.0`?
 
-`soot_telemetry` depends on `:ch` (the ClickHouse driver), and `ch
-0.7.x` pins `db_connection ~> 2.9.0`. A fresh Phoenix project locks
-`db_connection 2.10.x` via Postgrex, so `mix deps.get` fails resolution
-the moment soot is added unless the operator pins `db_connection`
-themselves. Add this line to the consumer's `mix.exs` deps and re-run
-`mix deps.get`:
-
-```elixir
-{:db_connection, "~> 2.9.0", override: true},
-```
-
-The fix lives in the consumer's `mix.exs` (not soot's) because Mix only
-honours `override: true` at the top level. Once `ch` widens its
-constraint upstream — see <https://github.com/plausible/ch> — this step
-goes away.
+`soot_telemetry` depends on `:ch` (the ClickHouse driver), which pins
+`db_connection ~> 2.9.0`. A fresh Phoenix project resolves
+`db_connection` to `2.10.x` via Postgrex, so `mix deps.get` fails the
+moment soot is added unless the consumer constrains it back to 2.9.0.
+The `--install db_connection@2.9.0` flag adds a top-level
+`{:db_connection, "== 2.9.0"}` entry to the consumer's `mix.exs` —
+restrictive enough to force re-resolution to 2.9.0, no `override: true`
+needed. Drop the flag once `:ch` widens its constraint upstream — see
+<https://github.com/plausible/ch>.
 
 ## Try it locally (QEMU device + example backend)
 
