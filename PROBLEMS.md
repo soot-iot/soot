@@ -8,11 +8,32 @@ something useful, or does this just no-op / fail / lose data?"
 Three blockers, plus context on what's already covered elsewhere and
 what's verified working.
 
+**Status as of 2026-04-29:** All three blockers resolved. See per-blocker notes below.
+
 ---
 
 ## Blockers
 
-### 1. `SootTelemetry.Writer.Noop` is the default writer
+### 1. `SootTelemetry.Writer.Noop` is the default writer — **resolved 2026-04-29**
+
+**Status:** Fixed across two PRs.
+
+* `soot_telemetry@16b0b11` adds `SootTelemetry.Writer.ClickHouse`, a
+  pass-through writer over the `:ch` driver. Forwards the validated
+  Arrow body verbatim as `INSERT INTO <table> FORMAT ArrowStream`.
+  `SootTelemetry.Application` auto-starts the connection pool when
+  this writer is configured. Failed inserts log at error and surface
+  as `{:error, {:clickhouse_insert_failed, _}}` so the ingest plug
+  returns a 500 instead of silently dropping.
+* [`soot-iot/soot_telemetry#7`](https://github.com/soot-iot/soot_telemetry/pull/7)
+  flips `mix soot_telemetry.install` to write
+  `config :soot_telemetry, :writer, SootTelemetry.Writer.ClickHouse`
+  into the consumer's `config/config.exs`. The library's
+  application-env default stays `Writer.Noop` so soot_telemetry's own
+  test suite can run with zero infra; consumer projects always boot
+  against ClickHouse.
+
+Original finding for context:
 
 `soot_telemetry/lib/soot_telemetry/writer.ex:38-44` — the only writer
 implementation pattern-matches the batch shape and returns `:ok`
@@ -23,18 +44,39 @@ Arrow body to a no-op. Nothing reaches ClickHouse.
 Already captured in `SPEC-2.md` §3.1 / §5.1 (recast as Arrow-native
 pass-through writer in Phase 7).
 
-### 2. The entire OLTP layer is ETS-only — **resolved 2026-04-27**
+### 2. The entire OLTP layer is ETS-only — **resolved 2026-04-29**
 
-**Status:** Fixed. Every resource now ships as a Spark `Ash.Resource`
-extension under `<Lib>.Resource.<Name>` plus a thin `Ash.DataLayer.Ets`
-default at `<Lib>.<Name>`. Consumers declare their own
-`AshPostgres.DataLayer`-backed module + `postgres do … end` block,
-apply the extension, and register via app config (e.g. `config
-:soot_core, device: MyApp.Device`). The four libraries' own test
-suites still run against the ETS defaults (369 tests passing across
-`soot_core`/`soot_telemetry`/`soot_contracts`/`soot_segments`); a
-consumer integration test in the `soot` umbrella will cover the
-AshPostgres path.
+**Status:** Fully resolved. Originally claimed resolved 2026-04-27
+when the libraries shipped Spark `Ash.Resource` extensions + thin
+`Ash.DataLayer.Ets` defaults — but a 2026-04-29 audit found that the
+per-lib igniter installers (`mix <lib>.install`) didn't generate the
+consumer-side AshPostgres modules or register them. A freshly
+`igniter.install`-ed project still booted entirely on ETS. Five PRs
+closed the gap so consumer projects boot against AshPostgres
+out-of-the-box (Postgres + ClickHouse are mandatory for every soot
+deployment, including dev — there is no "lightweight ETS mode"):
+
+* [`soot-iot/soot_core#9`](https://github.com/soot-iot/soot_core/pull/9)
+  — composes `ash_postgres.install` and generates six
+  AshPostgres-backed consumer modules (`Tenant`, `SerialScheme`,
+  `ProductionBatch`, `Device` with `AshStateMachine`, `DeviceShadow`,
+  `EnrollmentToken`).
+* [`soot-iot/ash_pki#8`](https://github.com/soot-iot/ash_pki/pull/8)
+  — same shape, four resources (`Certificate`, `CertificateAuthority`,
+  `RevocationList`, `EnrollmentToken`).
+* [`soot-iot/soot_contracts#10`](https://github.com/soot-iot/soot_contracts/pull/10)
+  — generates `BundleRow` + the `soot_contracts do
+  certificate_authority MyApp.CertificateAuthority end` sibling
+  reference.
+* [`soot-iot/soot_segments#9`](https://github.com/soot-iot/soot_segments/pull/9)
+  — generates `SegmentRow` and `SegmentVersion`.
+* [`soot-iot/soot#9`](https://github.com/soot-iot/soot/pull/9) — adds
+  `:ash_postgres` to the umbrella `mix soot.install`'s `installs:`
+  list so `mix.exs` picks it up before any per-lib installer runs.
+
+The libraries' own test suites still run against the ETS defaults;
+the installer tests cover the AshPostgres path via Igniter.Test
+filesystem assertions.
 
 Original finding for context:
 
@@ -90,26 +132,24 @@ contract bundle, and segment definition on every restart.
 
 **Not currently in `SPEC-2.md`.**
 
-### 3. Contract bundle signing only works with software CA keys — **in flight 2026-04-27**
+### 3. Contract bundle signing only works with software CA keys — **resolved 2026-04-28**
 
-**Status:** Two stacked PRs land the fix.
+**Status:** Both PRs merged. HSM-backed CAs can sign bundles
+end-to-end; the v0.1 phase-6 "HSM-backed CA keys shipped" claim is
+now accurate.
 
 * [`soot-iot/ash_pki#2`](https://github.com/soot-iot/ash_pki/pull/2)
-  adds `AshPki.KeyStrategy.sign(descriptor, body, opts)` — implemented
+  added `AshPki.KeyStrategy.sign(descriptor, body, opts)` — implemented
   for `Software` (`:public_key.sign/3`) and `Pkcs11` (engine-key
   reference). `Imported` returns `:no_signing_capability`; `KMS`
   returns `:not_implemented`. Tests cover the Software round-trip and
   add a SoftHSM2-tagged round-trip in the existing `:pkcs11`
-  integration block.
+  integration block. Merged 2026-04-28.
 * [`soot-iot/soot_contracts#3`](https://github.com/soot-iot/soot_contracts/pull/3)
-  rewrites `Bundle.sign_body/2` to dispatch through the new callback.
+  rewrote `Bundle.sign_body/2` to dispatch through the new callback.
   Errors from the strategy bubble up as `ArgumentError` with the
   underlying reason; the caller no longer assumes Software-only.
-  Depends on `ash_pki#2` landing first.
-
-Once both merge, HSM-backed CAs can sign bundles, and the v0.1
-phase-6 "HSM-backed CA keys shipped" claim becomes accurate
-end-to-end.
+  Merged 2026-04-28.
 
 Original finding for context:
 
@@ -189,11 +229,23 @@ real:
 
 * **AshPostgres seam across `soot_*`** — done (see Blocker 2 above).
   Pattern mirrors `ash_pki`: Spark extension + thin ETS default + app
-  config knob. Phase 7 entry added in `SPEC-2.md`.
-* **HSM-aware bundle signing** — in flight (see Blocker 3 above).
-  `AshPki.KeyStrategy.sign/3` lands in `ash_pki#2`;
-  `SootContracts.Bundle.sign_body/2` rewrites in `soot_contracts#3`.
-  Removes the hardcoded `Software` match.
+  config knob, with the per-lib installers generating consumer-side
+  AshPostgres modules and the umbrella `mix soot.install` ensuring
+  `:ash_postgres` lands in the operator's deps. Phase 7 entry added
+  in `SPEC-2.md`.
+* **HSM-aware bundle signing** — done (see Blocker 3 above).
+  `AshPki.KeyStrategy.sign/3` shipped in `ash_pki#2`;
+  `SootContracts.Bundle.sign_body/2` was rewritten in `soot_contracts#3`.
+  The hardcoded `Software` match is gone.
+* **Org-wide CI hygiene wart found during this work** — every per-lib
+  workflow had `pull_request: branches: [main]`, which silently skipped
+  CI on stacked PRs against feature branches.
+  [`soot-iot/soot_segments#7`](https://github.com/soot-iot/soot_segments/pull/7)
+  merged into main without CI ever running.
+  [`soot-iot/soot_segments#8`](https://github.com/soot-iot/soot_segments/pull/8)
+  fixed it; nine sibling PRs (`ci/run-on-all-prs` branch in each repo)
+  swept the same one-line fix across the rest. Worth adding a CI
+  template-baseline note to CLAUDE.md so it doesn't reappear.
 
 ---
 
