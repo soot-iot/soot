@@ -101,6 +101,52 @@ re-resolution to 2.9.0, no `override: true` needed. Drop the flag
 once `:ch` widens its constraint upstream — see
 <https://github.com/plausible/ch>.
 
+## Device-side Quickstart (Nerves + soot_device)
+
+The matching flow for the device side. Generates a Nerves project
+targeting QEMU and layers `soot_device` on top:
+
+```sh
+mix archive.install hex igniter_new
+mix archive.install hex nerves_new
+
+mix igniter.new my_device --with nerves.new \
+    --with-args="--target qemu_aarch64" \
+    --install soot_device@github:soot-iot/soot_device \
+    --yes
+
+cd my_device
+mix compile           # host build (smoke check)
+
+export MIX_TARGET=qemu_aarch64
+mix deps.get
+mix firmware          # ~5–15 min cold; ~300 MB Nerves system pulled
+```
+
+The `soot_device.install` task generates `lib/<app>/device.ex` (a
+declarative `SootDevice` DSL stub with the four blocks `identity`,
+`shadow`, `commands`, `telemetry`) plus
+`lib/<app>/soot_device_config.ex` (runtime config helper) and wires
+`<App>.Device` into the supervision tree. Compile-time placeholders
+(`contract_url`, `enroll_url`, `serial`) are overridden at runtime
+by the config helper so the same firmware can roll across
+environments.
+
+Boot the resulting image under QEMU with the launcher in
+[`soot_nerves_example`](https://github.com/soot-iot/soot_nerves_example)'s
+`scripts/run_qemu.sh`, or with this one-liner:
+
+```sh
+qemu-system-aarch64 -machine virt -cpu cortex-a72 -smp 2 -m 1024 -nographic \
+  -drive if=virtio,file=$(ls -t _build/qemu_aarch64_*/nerves/images/*.img | head -1),format=raw \
+  -netdev user,id=net0,hostfwd=tcp::4369-:4369,hostfwd=tcp::9100-:9100 \
+  -device virtio-net-device,netdev=net0
+```
+
+To talk to a backend running on the host from inside QEMU, bind the
+backend to `0.0.0.0` and use the QEMU user-mode gateway address
+`10.0.2.2` from the device.
+
 ## Try it locally (QEMU device + example backend)
 
 The Quickstart above is the right path for an operator generating a
