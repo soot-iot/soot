@@ -162,14 +162,14 @@ defmodule Mix.Tasks.Soot.InstallTest do
              "expected a 'No Phoenix router' warning"
     end
 
-    test "skips missing child installers with a clear warning" do
+    test "skips ash_authentication installers under test_mode with a clear warning" do
       igniter =
         test_project(files: %{})
         |> Igniter.compose_task("soot.install", [])
 
       skipped =
         igniter.warnings
-        |> Enum.filter(&(&1 =~ "Skipping `mix"))
+        |> Enum.filter(&(&1 =~ "Skipping `mix" and &1 =~ "test_mode"))
         |> Enum.map(fn warning ->
           warning
           |> String.split("`mix ", parts: 2)
@@ -178,13 +178,13 @@ defmodule Mix.Tasks.Soot.InstallTest do
           |> hd()
         end)
 
-      # The ash/auth installers aren't available in soot's deps because
-      # soot only depends on ash_pki/soot_* directly. The skip warning
-      # should still surface them by name so the operator knows what's
-      # missing.
+      # ash_authentication.install / _phoenix.install call
+      # `Igniter.apply_and_fetch_dependencies/2` deep in their chain,
+      # which is unavailable under `Igniter.Test.test_project/1`. The
+      # other composed children behave fine in test_mode and still
+      # run.
       assert "ash_authentication.install" in skipped
       assert "ash_authentication_phoenix.install" in skipped
-      assert "ash_postgres.install" in skipped
     end
   end
 
