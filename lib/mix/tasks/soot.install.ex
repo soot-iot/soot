@@ -98,11 +98,47 @@ if Code.ensure_loaded?(Igniter) do
       child_argv = build_child_argv(igniter.args.argv, options)
 
       igniter
+      |> include_existing_marker_files()
       |> compose_children(child_argv)
       |> generate_example_shadow(options)
       |> mount_device_pipeline()
       |> patch_broker_runtime_config()
       |> note_next_steps(options)
+    end
+
+    # `phx.new --database postgres` creates `lib/<app>/repo.ex` before
+    # any installer runs. When `ash_postgres.install` is then composed,
+    # it goes through `Igniter.Project.Module.find_and_update_or_create_module/4`,
+    # which discovers tracked files but trips on untracked-on-disk
+    # files with a "File already exists" error. Pre-include the
+    # conventional path for every marker module here so the composed
+    # installs follow the *update* branch and patch the existing file
+    # instead of trying to recreate it.
+    defp include_existing_marker_files(igniter) do
+      Enum.reduce(@child_installers, igniter, &include_marker_if_present/2)
+    end
+
+    defp include_marker_if_present(task, igniter) do
+      case child_marker_module(task) do
+        nil -> igniter
+        {kind, suffix} -> include_module_file(igniter, kind, suffix)
+      end
+    end
+
+    defp include_module_file(igniter, kind, suffix) do
+      module =
+        case kind do
+          :app -> Igniter.Project.Module.module_name(igniter, suffix)
+          :web -> Igniter.Libs.Phoenix.web_module_name(igniter, suffix)
+        end
+
+      path = Igniter.Project.Module.proper_location(igniter, module)
+
+      if File.exists?(path) do
+        Igniter.include_existing_file(igniter, path)
+      else
+        igniter
+      end
     end
 
     # `--example` defaults to true at the umbrella level. When it is
@@ -118,9 +154,29 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
+    # `ash_authentication.install` and friends call
+    # `Igniter.apply_and_fetch_dependencies/2` deep in their chain
+    # (via `Ash.Policy.Authorizer.install/5`), which is unavailable
+    # under `Igniter.Test.test_project/1`. The other composed children
+    # behave fine in test_mode and produce the formatter `import_deps`
+    # / scope edits soot's own tests assert on, so we keep running
+    # them. The skipped installers have their own test suites in their
+    # own repos.
+    @test_mode_skip ~w(ash_authentication.install ash_authentication_phoenix.install)
+
     defp compose_children(igniter, argv) do
       Enum.reduce(@child_installers, igniter, fn task, igniter ->
         cond do
+          igniter.assigns[:test_mode?] == true and task in @test_mode_skip ->
+            Igniter.add_warning(igniter, """
+            Skipping `mix #{task}` — running under Igniter's test_mode.
+
+            This installer ultimately calls
+            `Igniter.apply_and_fetch_dependencies/2`, which is not
+            available under `Igniter.Test.test_project/1`. Test it in
+            its own repo's suite.
+            """)
+
           not task_available?(task) ->
             Igniter.add_warning(igniter, """
             Skipping `mix #{task}` — the task is not available.
