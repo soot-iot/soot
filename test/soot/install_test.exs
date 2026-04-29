@@ -57,6 +57,7 @@ defmodule Mix.Tasks.Soot.InstallTest do
                "ash_phoenix.install",
                "ash_authentication.install",
                "ash_authentication_phoenix.install",
+               "cinder.install",
                "ash_pki.install",
                "soot_core.install",
                "ash_mqtt.install",
@@ -70,7 +71,8 @@ defmodule Mix.Tasks.Soot.InstallTest do
     test "exposes the documented option schema and aliases" do
       info = Mix.Tasks.Soot.Install.info([], nil)
 
-      assert info.schema == [example: :boolean, yes: :boolean]
+      assert info.schema == [example: :boolean, yes: :boolean, auth_strategy: :string]
+      assert info.defaults[:auth_strategy] == "magic_link"
       assert info.aliases == [y: :yes, e: :example]
       assert info.group == :soot
     end
@@ -197,6 +199,33 @@ defmodule Mix.Tasks.Soot.InstallTest do
       assert Enum.any?(igniter.notices, &(&1 =~ "Soot installed."))
       assert Enum.any?(igniter.notices, &(&1 =~ "mix ash.setup"))
       assert Enum.any?(igniter.notices, &(&1 =~ "/admin"))
+    end
+
+    test "names the auth strategy in the next-steps notice (default magic_link)" do
+      igniter =
+        test_project(files: %{})
+        |> Igniter.compose_task("soot.install", [])
+
+      assert Enum.any?(
+               igniter.notices,
+               &(&1 =~ "Auth strategy: magic_link")
+             )
+    end
+
+    test "honors an operator-supplied --auth-strategy override" do
+      igniter =
+        test_project(files: %{})
+        |> Igniter.compose_task("soot.install", ["--auth-strategy", "password"])
+
+      assert Enum.any?(
+               igniter.notices,
+               &(&1 =~ "Auth strategy: password")
+             )
+
+      refute Enum.any?(
+               igniter.notices,
+               &(&1 =~ "Auth strategy: magic_link")
+             )
     end
 
     test "schedules soot.demo.seed by default (--example is on)" do

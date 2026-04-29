@@ -46,6 +46,12 @@ defmodule Mix.Tasks.Soot.Install.Docs do
       stream, weather shadow), and `mix soot.demo.seed` is scheduled
       to run after `ash.setup`. Pass `--no-example` for a clean
       skeleton.
+    * `--auth-strategy <strategy>` — strategy passed through to
+      `ash_authentication.install` so the generated `User` resource
+      ships with a working auth flow. Defaults to `magic_link`,
+      which pairs with the dev Swoosh mailer for a zero-config
+      sign-in. Use `password` (or any other strategy
+      `ash_authentication.install` accepts) to override.
     * `--yes` — answer "yes" to dependency-fetching prompts
       (passed through to child installers).
     """
@@ -67,6 +73,7 @@ if Code.ensure_loaded?(Igniter) do
       "ash_phoenix.install",
       "ash_authentication.install",
       "ash_authentication_phoenix.install",
+      "cinder.install",
       "ash_pki.install",
       "soot_core.install",
       "ash_mqtt.install",
@@ -75,6 +82,8 @@ if Code.ensure_loaded?(Igniter) do
       "soot_contracts.install",
       "soot_admin.install"
     ]
+
+    @default_auth_strategy "magic_link"
 
     @impl Igniter.Mix.Task
     def info(_argv, _composing_task) do
@@ -85,9 +94,10 @@ if Code.ensure_loaded?(Igniter) do
         composes: @child_installers,
         schema: [
           example: :boolean,
-          yes: :boolean
+          yes: :boolean,
+          auth_strategy: :string
         ],
-        defaults: [example: true, yes: false],
+        defaults: [example: true, yes: false, auth_strategy: @default_auth_strategy],
         aliases: [y: :yes, e: :example]
       }
     end
@@ -145,11 +155,32 @@ if Code.ensure_loaded?(Igniter) do
     # set, make sure children that read `igniter.args.options[:example]`
     # see it explicitly in argv (their own defaults are false). When
     # the operator passed `--no-example`, leave argv alone.
+    #
+    # `--auth-strategy` defaults to `magic_link` so a fresh project
+    # gets a working sign-in path out of the box. Without this,
+    # `ash_authentication.install` generates a `User` with no
+    # `strategies` block while `ash_authentication_phoenix.install`
+    # still wires `magic_sign_in_route(...)` into the router — sign-in
+    # then 404s / crashes because the named strategy doesn't exist.
     defp build_child_argv(argv, options) do
+      argv
+      |> maybe_append_example(options)
+      |> maybe_append_auth_strategy(options)
+    end
+
+    defp maybe_append_example(argv, options) do
       cond do
         "--example" in argv or "-e" in argv -> argv
         "--no-example" in argv -> argv
         options[:example] -> argv ++ ["--example"]
+        true -> argv
+      end
+    end
+
+    defp maybe_append_auth_strategy(argv, options) do
+      cond do
+        "--auth-strategy" in argv -> argv
+        is_binary(options[:auth_strategy]) -> argv ++ ["--auth-strategy", options[:auth_strategy]]
         true -> argv
       end
     end
@@ -234,6 +265,7 @@ if Code.ensure_loaded?(Igniter) do
       "ash_postgres.install" => {:app, "Repo"},
       "ash_phoenix.install" => nil,
       "ash.install" => nil,
+      "cinder.install" => nil,
       "ash_pki.install" => {:app, "Pki"},
       "soot_core.install" => {:app, "Devices"},
       "ash_mqtt.install" => nil,
@@ -461,6 +493,8 @@ if Code.ensure_loaded?(Igniter) do
           ""
         end
 
+      auth_strategy = options[:auth_strategy] || @default_auth_strategy
+
       igniter =
         Igniter.add_notice(igniter, """
         Soot installed.
@@ -469,6 +503,11 @@ if Code.ensure_loaded?(Igniter) do
 
           mix ash.setup           # apply migrations + extension setup
           mix phx.server
+
+        Auth strategy: #{auth_strategy} (override with
+        `--auth-strategy <name>` on `mix soot.install`). The default
+        magic-link flow uses the dev Swoosh mailer, so look in the
+        `/dev/mailbox` LiveView for the sign-in email.
 
         Device-facing endpoints are mounted under the :device_mtls
         pipeline in your router. Admin LiveViews are at /admin.
