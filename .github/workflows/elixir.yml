@@ -4,8 +4,11 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # Fire on every PR regardless of base branch. The previous
+  # `branches: [main]` filter silently skipped CI on stacked PRs whose
+  # base was a sibling feature branch — work merged into main without
+  # ever running the gate.
   pull_request:
-    branches: [main]
 
 jobs:
   test:
