@@ -45,16 +45,12 @@ broker config, ClickHouse migrations.
 mix archive.install hex igniter_new
 mix archive.install hex phx_new
 
-# 1. Generate the Phoenix shell with the Ash + Postgres stack.
 mix igniter.new my_iot --with phx.new \
-    --install ash,ash_postgres,ash_phoenix \
-    --install db_connection@2.9.0 \
+    --with-args="--database postgres" \
+    --install db_connection@2.9.0,soot@github:soot-iot/soot \
     --yes
 
-# 2. Layer soot on top.
 cd my_iot
-mix igniter.install soot@github:soot-iot/soot --yes
-
 mix ash.setup           # apply migrations + extension setup
 mix soot.demo.seed      # optional: plant demo tenant + 25 devices + admin user
 mix phx.server
@@ -64,42 +60,32 @@ Browse to <http://localhost:4000/admin> and sign in with the credentials
 the seed task printed. Device-facing endpoints (`/enroll`, `/ingest`,
 `/.well-known/soot/contract`) listen on the same port behind mTLS.
 
-### Why two steps?
-
-`soot.install` composes `ash_postgres.install` (and `ash.install`,
-`ash_phoenix.install`, …) in dependency order. If those installers
-haven't already converted the operator's `lib/<app>/repo.ex` from the
-Phoenix-generated `Ecto.Repo` to `AshPostgres.Repo`, the composed
-ash_postgres install hits a "File already exists" conflict: the
-upstream installer goes through a create-not-update path when the
-existing file isn't yet tracked in the in-flight Igniter state. Doing
-ash_postgres in a *separate* `mix igniter.new` invocation lets it
-write the AshPostgres.Repo conversion to disk first, after which
-soot.install's compose chain finds the file in place and updates it
-idempotently. Once that upstream race is fixed, this collapses back
-to a single `mix igniter.new --install soot@github:…` invocation.
-
 `mix igniter.install soot` is the umbrella; it composes per-library
 installers (`ash_pki.install`, `soot_core.install`, `soot_admin.install`,
 …) in the right order. Each transitive soot library is declared as
 `github: "soot-iot/<lib>", branch: "main", override: true` in soot's
 `mix.exs`, so the single `--install soot@github:…` flag drags the whole
-framework in without enumerating siblings. See
+framework in without enumerating siblings. `:ash_postgres` is declared
+in `soot.install`'s `info.installs`, which adds it to the consumer's
+`mix.exs` before the compose chain reaches `ash_postgres.install` —
+without that, the task wouldn't be loadable (ash_postgres is an
+*optional* transitive of `:ash_authentication`). See
 [`UI-SPEC.md`](UI-SPEC.md) for the full design and [`UI-SPEC.md`
 §4](UI-SPEC.md) for the per-installer responsibility table.
 
 ### Why the extra `--install db_connection@2.9.0`?
 
 `soot_telemetry` depends on `:ch` (the ClickHouse driver), which pins
-`db_connection ~> 2.9.0`. A fresh Phoenix project resolves
-`db_connection` to `2.10.x` via Postgrex, so `mix deps.get` fails the
-moment soot is added unless the consumer constrains it back to 2.9.0.
-The `--install db_connection@2.9.0` flag (in step 1, before any of
-soot's transitives land) adds a top-level `{:db_connection, "==
-2.9.0"}` to the consumer's `mix.exs` — restrictive enough to force
-re-resolution to 2.9.0, no `override: true` needed. Drop the flag
-once `:ch` widens its constraint upstream — see
-<https://github.com/plausible/ch>.
+`db_connection ~> 2.9.0`. A fresh Phoenix project locks
+`db_connection 2.10.0` via Postgrex, so `mix deps.get` fails the
+moment soot is added unless the consumer constrains it back to 2.9.x.
+The `--install db_connection@2.9.0` flag adds a top-level
+`{:db_connection, "== 2.9.0"}` to the consumer's `mix.exs` —
+restrictive enough to force re-resolution to 2.9.0 without
+`override: true`. This pin can't move inside `soot.install` because
+the conflict is hit at `mix deps.get` *before* soot is fetched, so
+the installer's `info/2` never gets to run. Drop the flag once `:ch`
+widens its constraint upstream — see <https://github.com/plausible/ch>.
 
 ## Device-side Quickstart (Nerves + soot_device)
 
