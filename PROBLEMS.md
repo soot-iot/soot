@@ -309,5 +309,23 @@ state is hiding.
   resolves all `soot_*` / `ash_*` libraries through whatever SHAs
   `mix.exs` / `mix.lock` of `soot-iot/soot@<ref>` pin. A PR to e.g.
   `soot-iot/soot_core` is not tested against the umbrella until
-  someone bumps the lock here. Acceptable; per-library CI catches
-  per-library breakage.
+  someone bumps the lock here. Per-library CI catches per-library
+  breakage; the umbrella regression risk is uncovered.
+
+  **Return-to plan.** Igniter's `--install <name>@github:<owner>/
+  <repo>@<ref>` form already accepts a ref. A sibling-PR override
+  would extend the script with a list-of-overrides input
+  (env var, e.g. `SOOT_E2E_OVERRIDES="ash_pki=my-branch,soot_core=
+  other-branch"`) that the script splits and threads as extra
+  `--install` flags after the main `soot@github:...` install. Each
+  extra install at the top level of the operator's `mix.exs` should
+  win over soot's transitive github dep, though this needs
+  verification — Mix doesn't auto-add `override: true` for
+  duplicate github sources, so igniter may need a small change to
+  emit the override keyword for top-level explicit deps. In the
+  workflow, a `workflow_dispatch` input + a per-library
+  `repository_dispatch` trigger from the sibling repo's CI would
+  let a `soot_core` PR fire the umbrella E2E with its own branch
+  pinned. Keep the override mechanism in the script — not the
+  workflow — so the same override is reproducible locally
+  (`SOOT_E2E_OVERRIDES=... ./scripts/integration_e2e.sh all`).

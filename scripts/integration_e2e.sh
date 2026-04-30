@@ -101,6 +101,21 @@ stage_setup() {
 
   mkdir -p "$TMP"
 
+  # Pre-flight: refuse to start if any host port we need is already
+  # listening. We bind to localhost in the compose file, but docker
+  # still fails the bind in a noisy way. Surfacing it here with the
+  # exact override knob is friendlier.
+  check_port() {
+    local port="$1" name="$2" override="$3"
+    if (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null; then
+      fail "port $port ($name) already in use; export $override=<free port> and re-run"
+    fi
+  }
+  check_port "$SOOT_E2E_POSTGRES_PORT"  "postgres"   "SOOT_E2E_POSTGRES_PORT"
+  check_port "$SOOT_E2E_MQTT_PORT"      "mqtt"       "SOOT_E2E_MQTT_PORT"
+  check_port "$SOOT_E2E_CH_HTTP_PORT"   "clickhouse" "SOOT_E2E_CH_HTTP_PORT"
+  check_port "$SOOT_E2E_CH_TCP_PORT"    "clickhouse" "SOOT_E2E_CH_TCP_PORT"
+
   log "starting docker services (postgres, $BROKER, clickhouse)"
   docker compose "${COMPOSE_ARGS[@]}" up -d --wait
 
@@ -165,6 +180,53 @@ stage_gen_backend() {
 
   log "step 2: mix igniter.install soot@github:soot-iot/soot@$SOOT_REF"
   mix igniter.install "soot@github:soot-iot/soot@$SOOT_REF" --yes
+
+  # If any service port has been overridden away from its README
+  # default, patch the generated dev.exs/test.exs so ash.setup,
+  # phx.server, etc. actually reach the docker-compose services.
+  # No-op when the user accepts the defaults (CI, README evaluators).
+  if [[ "$SOOT_E2E_POSTGRES_PORT" != "5432" ]]; then
+    log "patching config/dev.exs + test.exs for non-default Postgres port $SOOT_E2E_POSTGRES_PORT"
+    patch_backend_postgres_port
+  fi
+}
+
+# Patches the generated Phoenix project's `config/{dev,test}.exs` to
+# add `port: $SOOT_E2E_POSTGRES_PORT` to the Repo config block.
+# Idempotent: if the port: line is already present, replaces its
+# value; otherwise injects after the `hostname:` line.
+patch_backend_postgres_port() {
+  python3 - <<EOF
+import pathlib
+
+pg_port = "$SOOT_E2E_POSTGRES_PORT"
+
+for env in ("dev.exs", "test.exs"):
+    path = pathlib.Path("config") / env
+    if not path.exists():
+        continue
+
+    out = []
+    inserted = False
+    replaced = False
+    for line in path.read_text().splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith('#'):
+            out.append(line)
+            continue
+        if stripped.startswith('port:') and not replaced:
+            indent = line[:len(line) - len(stripped)]
+            out.append(indent + 'port: ' + pg_port + ',\n')
+            replaced = True
+            continue
+        out.append(line)
+        if not inserted and not replaced and stripped.startswith('hostname:'):
+            indent = line[:len(line) - len(stripped)]
+            out.append(indent + 'port: ' + pg_port + ',\n')
+            inserted = True
+
+    path.write_text(''.join(out))
+EOF
 }
 
 # --------------------------------------------------------------------

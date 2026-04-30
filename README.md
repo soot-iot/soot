@@ -214,10 +214,12 @@ reproducer matches what an evaluator following the docs would
 expect. If those collide with services you already run on the
 host, override per-port with `SOOT_E2E_POSTGRES_PORT`,
 `SOOT_E2E_MQTT_PORT`, `SOOT_E2E_CH_HTTP_PORT`,
-`SOOT_E2E_BACKEND_PORT`, etc. — but note that a non-default
-Postgres port means you'll need to patch the generated
-`config/dev.exs` yourself; the script does **not** do that for
-you.
+`SOOT_E2E_BACKEND_PORT`, etc. The `setup` stage refuses to start
+if any of those ports is already in use (with the exact override
+knob in the error). When `SOOT_E2E_POSTGRES_PORT` differs from the
+default, `gen-backend` patches the generated `config/dev.exs` and
+`config/test.exs` to match, so `ash.setup` and `mix phx.server`
+just work.
 
 ### Poking at the running stack
 
