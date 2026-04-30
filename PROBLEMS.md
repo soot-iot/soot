@@ -296,6 +296,19 @@ state is hiding.
   publishing is in place; until then, README-following evaluators
   will see "package soot not found" from hex.
 
+* **`mix igniter.install <name>@github:...` does not run the
+  install task.** Verified locally 2026-04-30: after step 2 the
+  project has `:soot` in `mix.exs` and the soot deps fetched, but
+  zero soot-generated files (no resources, no admin, no router
+  pipelines). Running `mix soot.install --yes` as a separate third
+  step generates the expected 50+ files and produces the install
+  task's next-steps output. So the script does that explicitly.
+  The README's "Why two steps?" section claims a single
+  `mix igniter.install soot@github:...` is enough — that's wrong
+  for this form. Either fix igniter to run the install task for
+  github-source installs, or update the README to document the
+  three-step reality.
+
 * **PR self-test on `soot-iot/soot`.** `integration.yml` passes
   `${{ github.event.pull_request.head.sha || github.sha }}` as
   `SOOT_E2E_REF` so the test exercises the PR's own commit. This

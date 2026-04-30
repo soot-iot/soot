@@ -178,8 +178,19 @@ stage_gen_backend() {
 
   cd "$BACKEND_DIR"
 
-  log "step 2: mix igniter.install soot@github:soot-iot/soot@$SOOT_REF"
+  log "step 2: mix igniter.install soot@github:soot-iot/soot@$SOOT_REF (adds dep)"
   mix igniter.install "soot@github:soot-iot/soot@$SOOT_REF" --yes
+
+  # `mix igniter.install <name>@github:...` adds the dep and
+  # recompiles, but does NOT compose `soot.install` the way the
+  # hex form would. Without this third step the project stays at
+  # "phoenix + ash, with :soot in mix.exs" — no resources, no
+  # admin, no router pipelines, no broker config, no migrations
+  # for soot resources. Run the install task explicitly.
+  # See PROBLEMS.md → "mix igniter.install <github> form does not
+  # compose the install task".
+  log "step 3: mix soot.install --yes (composes per-library installers)"
+  mix soot.install --yes
 
   # If any service port has been overridden away from its README
   # default, patch the generated dev.exs/test.exs so ash.setup,
@@ -193,11 +204,12 @@ stage_gen_backend() {
 
 # Patches the generated Phoenix project's `config/{dev,test}.exs` to
 # add `port: $SOOT_E2E_POSTGRES_PORT` to the Repo config block.
-# Idempotent: if the port: line is already present, replaces its
-# value; otherwise injects after the `hostname:` line.
+# Idempotent: if a `port:` line already exists (any value), replaces
+# its value; otherwise injects one after the `hostname:` line.
 patch_backend_postgres_port() {
   python3 - <<EOF
 import pathlib
+import re
 
 pg_port = "$SOOT_E2E_POSTGRES_PORT"
 
@@ -206,24 +218,41 @@ for env in ("dev.exs", "test.exs"):
     if not path.exists():
         continue
 
+    lines = path.read_text().splitlines(keepends=True)
+
+    # Look for an existing non-comment \`port:\` line. If found,
+    # replace its value in place and we're done. Otherwise insert
+    # a new \`port:\` line right after the first \`hostname:\` line.
+    has_port = any(
+        line.lstrip().startswith('port:')
+        for line in lines
+        if not line.lstrip().startswith('#')
+    )
+
     out = []
-    inserted = False
-    replaced = False
-    for line in path.read_text().splitlines(keepends=True):
-        stripped = line.lstrip()
-        if stripped.startswith('#'):
+    if has_port:
+        seen = False
+        for line in lines:
+            stripped = line.lstrip()
+            if not stripped.startswith('#') and stripped.startswith('port:'):
+                if not seen:
+                    indent = line[:len(line) - len(stripped)]
+                    out.append(indent + 'port: ' + pg_port + ',\n')
+                    seen = True
+                # drop duplicate port: lines (defensive)
+            else:
+                out.append(line)
+    else:
+        injected = False
+        for line in lines:
             out.append(line)
-            continue
-        if stripped.startswith('port:') and not replaced:
-            indent = line[:len(line) - len(stripped)]
-            out.append(indent + 'port: ' + pg_port + ',\n')
-            replaced = True
-            continue
-        out.append(line)
-        if not inserted and not replaced and stripped.startswith('hostname:'):
-            indent = line[:len(line) - len(stripped)]
-            out.append(indent + 'port: ' + pg_port + ',\n')
-            inserted = True
+            stripped = line.lstrip()
+            if (not injected
+                and not stripped.startswith('#')
+                and stripped.startswith('hostname:')):
+                indent = line[:len(line) - len(stripped)]
+                out.append(indent + 'port: ' + pg_port + ',\n')
+                injected = True
 
     path.write_text(''.join(out))
 EOF
