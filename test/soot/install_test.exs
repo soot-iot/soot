@@ -77,14 +77,25 @@ defmodule Mix.Tasks.Soot.InstallTest do
       assert info.group == :soot
     end
 
-    test "documents the ash_postgres caveat in long_doc" do
-      # `:ash_postgres` is an optional dep of `:ash_authentication` so
-      # mix won't pull it transitively, and `soot_core.install`
-      # generates AshPostgres-backed resources. The canonical install
-      # command in long_doc must list it explicitly so operators get a
-      # working build out of the box.
-      assert Mix.Tasks.Soot.Install.Docs.long_doc() =~
-               "--install ash_postgres,soot"
+    test "declares ash_postgres in installs so the task is loadable when composed" do
+      # `:ash_postgres` is an optional transitive of `:ash_authentication`,
+      # so mix won't pull it on its own. Putting it in `info.installs`
+      # makes igniter add it to the consumer's mix.exs (and run
+      # `mix deps.get`) before `ash_postgres.install` would be composed
+      # by `soot.install`, so the task is available.
+      info = Mix.Tasks.Soot.Install.info([], nil)
+
+      assert {:ash_postgres, "~> 2.6"} in info.installs
+    end
+
+    test "long_doc explains the db_connection workaround constraint" do
+      # `:ch`'s `db_connection ~> 2.9.0` conflicts with what phx.new
+      # locks (~> 2.10) before soot is fetched, so the pin must be a
+      # CLI-level top-level dep — it cannot live inside soot.install.
+      doc = Mix.Tasks.Soot.Install.Docs.long_doc()
+
+      assert doc =~ "--install db_connection@2.9.0"
+      assert doc =~ "ch"
     end
   end
 

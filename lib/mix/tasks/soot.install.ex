@@ -19,17 +19,22 @@ defmodule Mix.Tasks.Soot.Install.Docs do
 
     ## Canonical bootstrap (from a clean machine)
 
-    `:ash_postgres` is an *optional* dep of `:ash_authentication` so
-    mix won't pull it transitively, and `soot_core.install` generates
-    resources backed by `AshPostgres.DataLayer` — list ash_postgres
-    explicitly under `--install` so it lands in `mix.exs` before the
-    soot installers run.
+    `soot.install` declares `:ash_postgres` in its `installs:` list so
+    igniter adds it to the consumer's `mix.exs` before `ash_postgres.install`
+    is composed (otherwise the task would be unavailable, since
+    ash_postgres is an *optional* transitive of `:ash_authentication`).
+
+    The `--install db_connection@2.9.0` pin works around `:ch`'s
+    `db_connection ~> 2.9.0` requirement vs. the `2.10.x` that
+    `phx.new` locks via Postgrex — that conflict fails at
+    `mix deps.get` *before* soot is fetched, so it can't be moved
+    inside `soot.install`. Drop the flag once `:ch` widens upstream.
 
     ```bash
     mix archive.install hex igniter_new
     mix archive.install hex phx_new
     mix igniter.new my_iot \\
-        --install ash_postgres,soot \\
+        --install db_connection@2.9.0,soot \\
         --with phx.new \\
         --with-args="--database postgres"
     cd my_iot
@@ -91,6 +96,14 @@ if Code.ensure_loaded?(Igniter) do
 
     @default_auth_strategy "magic_link"
 
+    # `:ash_postgres` is an *optional* dep of `:ash_authentication`, so
+    # mix won't pull it transitively even though `soot_core.install`
+    # generates `AshPostgres.DataLayer`-backed resources. Declaring it
+    # here adds it to the consumer's `mix.exs` (and runs `mix deps.get`)
+    # before `soot.install`'s compose chain reaches `ash_postgres.install`,
+    # so the task is loadable when we go to compose it.
+    @forced_top_level_deps [{:ash_postgres, "~> 2.6"}]
+
     @impl Igniter.Mix.Task
     def info(_argv, _composing_task) do
       %Igniter.Mix.Task.Info{
@@ -98,6 +111,7 @@ if Code.ensure_loaded?(Igniter) do
         example: __MODULE__.Docs.example(),
         only: nil,
         composes: @child_installers,
+        installs: @forced_top_level_deps,
         schema: [
           example: :boolean,
           yes: :boolean,
