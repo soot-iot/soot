@@ -249,26 +249,26 @@ defmodule Mix.Tasks.Soot.InstallTest do
              )
     end
 
-    test "schedules soot.demo.seed by default (--example is on)" do
+    test "schedules soot.seed --demo by default (--example is on)" do
       igniter =
         test_project(files: %{})
         |> Igniter.compose_task("soot.install", [])
 
       assert Enum.any?(igniter.tasks, fn
-               {"soot.demo.seed", _, _} -> true
-               {"soot.demo.seed", _} -> true
+               {"soot.seed", ["--demo" | _], _} -> true
+               {"soot.seed", ["--demo" | _]} -> true
                _ -> false
              end)
     end
 
-    test "does not schedule soot.demo.seed when --no-example is passed" do
+    test "still schedules soot.seed (no --demo) when --no-example is passed" do
       igniter =
         test_project(files: %{})
         |> Igniter.compose_task("soot.install", ["--no-example"])
 
-      refute Enum.any?(igniter.tasks, fn
-               {"soot.demo.seed", _, _} -> true
-               {"soot.demo.seed", _} -> true
+      assert Enum.any?(igniter.tasks, fn
+               {"soot.seed", argv, _} -> "--demo" not in argv
+               {"soot.seed", argv} -> "--demo" not in argv
                _ -> false
              end)
     end

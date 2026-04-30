@@ -1,52 +1,71 @@
-defmodule Mix.Tasks.Soot.Demo.Seed do
-  @shortdoc "Plant a demo tenant, devices, telemetry stream, and admin user"
+defmodule Mix.Tasks.Soot.Seed do
+  @shortdoc "Plant a default tenant + admin user (and optionally a demo fleet)"
 
   @moduledoc """
-  Seeds an operator's freshly-installed Soot project with enough data
-  to make the admin UI non-empty on first boot.
+  Seeds an operator's freshly-installed Soot project so the admin UI
+  has a working actor + tenant on first boot.
+
+      mix soot.seed              # default tenant + admin user
+      mix soot.seed --demo       # additionally plant a 5-device fleet
+                                 # under the default tenant
 
   Intended for development. Do NOT run in production — it creates a
-  predictable admin password.
+  predictable admin password (override with `--admin-password`).
 
-      mix soot.demo.seed [--simulator]
+  ## What it always creates
 
-  ## What it creates
+    * `SootCore.Tenant` slug: `default`, name: `Default`
+    * Admin `<App>.Accounts.User` with `role: :admin` and
+      `tenant_id` pointing at the default tenant. Email + password
+      are printed at the end of the run.
 
-    * `SootCore.Tenant` slug: `demo`
-    * `SootCore.SerialScheme` `DEMO-` prefix
+  ## What `--demo` adds
+
+    * `SootCore.SerialScheme` `DEMO-` prefix on the default tenant
     * `SootCore.ProductionBatch` `demo-batch-1`
     * 5 unprovisioned `SootCore.Device` rows under that batch
     * Per-device `SootCore.DeviceShadow` with desired state
       `{weather_enabled: true, weather_interval_s: 60, label: "lab-N"}`
-    * Admin `<App>.Accounts.User` (printed credentials at the end)
     * Registers `MyApp.Telemetry.{Cpu,Memory,Disk,OutdoorTemperature}`
       stream modules via `SootTelemetry.Registry.register_all/1`
 
   ## Options
 
-    * `--simulator` — pulse log lines on a few seconds' interval to
-      mimic a running fleet. Press Ctrl+C to stop. (Real telemetry
-      simulation lands once the device-side example is wired up.)
+    * `--demo` — also plant the demo fleet described above.
+    * `--simulator` — only meaningful with `--demo`. Pulses log lines
+      on a few seconds' interval to mimic a running fleet. Press
+      Ctrl+C to stop.
     * `--admin-email` — email for the seeded admin user. Default
       `admin@example.com`.
-    * `--admin-password` — password. Default `demo-password`. Printed
+    * `--admin-password` — password. Default `changeme`. Printed
       to stdout regardless of source.
-    * `--batch-size` — how many devices in the batch. Default 5.
+    * `--tenant-slug` — slug for the default tenant. Default
+      `default`.
+    * `--tenant-name` — name for the default tenant. Default
+      `Default`.
+    * `--batch-size` — only meaningful with `--demo`. How many
+      devices in the batch. Default 5.
   """
 
   use Mix.Task
 
   @switches [
+    demo: :boolean,
     simulator: :boolean,
     admin_email: :string,
     admin_password: :string,
+    tenant_slug: :string,
+    tenant_name: :string,
     batch_size: :integer
   ]
 
   @defaults [
+    demo: false,
     simulator: false,
     admin_email: "admin@example.com",
-    admin_password: "demo-password",
+    admin_password: "changeme",
+    tenant_slug: "default",
+    tenant_name: "Default",
     batch_size: 5
   ]
 
@@ -59,38 +78,56 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
 
     app_module = derive_app_module()
 
-    Mix.shell().info("==> Soot demo seed starting (app: #{inspect(app_module)})\n")
+    Mix.shell().info("==> Soot seed starting (app: #{inspect(app_module)})\n")
 
-    tenant = seed_tenant()
-    scheme = seed_serial_scheme(tenant)
-    batch = seed_batch(tenant, scheme)
-    devices = seed_devices(tenant, scheme, batch, opts[:batch_size])
-    _shadows = seed_shadows(devices)
-    _user = seed_admin_user(app_module, opts[:admin_email], opts[:admin_password])
-    _streams = seed_telemetry_streams(app_module)
+    tenant = seed_tenant(opts[:tenant_slug], opts[:tenant_name])
+    user = seed_admin_user(app_module, tenant, opts[:admin_email], opts[:admin_password])
 
-    Mix.shell().info("""
+    if opts[:demo] do
+      scheme = seed_serial_scheme(tenant)
+      batch = seed_batch(tenant, scheme)
+      devices = seed_devices(tenant, scheme, batch, opts[:batch_size])
+      _shadows = seed_shadows(devices)
+      _streams = seed_telemetry_streams(app_module)
 
-    ==> Demo seed complete.
+      Mix.shell().info("""
 
-      Tenant:           #{tenant_label(tenant)}
-      Serial scheme:    DEMO- (#{tenant_label(tenant)})
-      Production batch: #{batch_label(batch)} (#{opts[:batch_size]} unprovisioned devices)
-      Telemetry streams: cpu, memory, disk, outdoor_temperature
-      Shadow desired:   weather_enabled=true, weather_interval_s=60, label="lab-N"
+      ==> Soot seed complete (with demo fleet).
 
-      Admin sign-in:    #{opts[:admin_email]} / #{opts[:admin_password]}
+        Tenant:           #{tenant_label(tenant)}
+        Serial scheme:    DEMO- (#{tenant_label(tenant)})
+        Production batch: #{batch_label(batch)} (#{opts[:batch_size]} unprovisioned devices)
+        Telemetry streams: cpu, memory, disk, outdoor_temperature
+        Shadow desired:   weather_enabled=true, weather_interval_s=60, label="lab-N"
 
-    Visit http://localhost:4000/admin after `mix phx.server`.
+        Admin sign-in:    #{opts[:admin_email]} / #{opts[:admin_password]}
 
-    Devices land in :unprovisioned. Once the device-side example
-    bootstraps + enrolls, they advance through the state machine to
-    :operational on their own.
-    """)
+      Visit http://localhost:4000/admin after `mix phx.server`.
 
-    if opts[:simulator] do
-      Mix.shell().info("==> Starting simulator (Ctrl+C to stop)…\n")
-      run_simulator()
+      Devices land in :unprovisioned. Once the device-side example
+      bootstraps + enrolls, they advance through the state machine to
+      :operational on their own.
+      """)
+
+      if opts[:simulator] do
+        Mix.shell().info("==> Starting simulator (Ctrl+C to stop)…\n")
+        run_simulator()
+      end
+    else
+      Mix.shell().info("""
+
+      ==> Soot seed complete.
+
+        Tenant:           #{tenant_label(tenant)}
+        Admin sign-in:    #{opts[:admin_email]} / #{opts[:admin_password]}
+
+      Visit http://localhost:4000/admin after `mix phx.server`.
+
+      Pass `--demo` to additionally plant a 5-device fleet under the
+      default tenant for a non-empty admin UI.
+      """)
+
+      _ = user
     end
   end
 
@@ -104,29 +141,28 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
   end
 
   # Every Ash call routes through the `:seed` System actor. The
-  # default policies on the six soot_core resources (POLICY-SPEC §4.1)
-  # accept `:seed` alongside their per-resource service actors
-  # (`:enroller`, `:batch_provisioner`, `:device_shadow_writer`), so a
-  # single actor is enough to seed the whole demo surface. This keeps
+  # default policies on the soot_core / ash_pki / soot_telemetry /
+  # soot_segments / soot_contracts resources (POLICY-SPEC §4.1) accept
+  # `:seed` alongside their per-resource service actors. This keeps
   # the bypass visible in the policy DSL — preferable to
   # `authorize?: false`, which `SootCore.Credo.NoAuthorizeFalse`
   # refuses outside `test/support/` (POLICY-SPEC §5, §7).
   defp ash_opts, do: [actor: SootCore.Actors.system(:seed)]
 
-  defp seed_tenant do
-    case SootCore.Tenant.create("demo", "Demo Tenant", %{}, ash_opts()) do
+  defp seed_tenant(slug, name) do
+    case SootCore.Tenant.create(slug, name, %{}, ash_opts()) do
       {:ok, tenant} ->
-        Mix.shell().info("    create  Tenant 'demo'")
+        Mix.shell().info("    create  Tenant '#{slug}'")
         tenant
 
       {:error, _} ->
-        case SootCore.Tenant.get_by_slug("demo", ash_opts()) do
+        case SootCore.Tenant.get_by_slug(slug, ash_opts()) do
           {:ok, tenant} ->
-            Mix.shell().info("    exists  Tenant 'demo'")
+            Mix.shell().info("    exists  Tenant '#{slug}'")
             tenant
 
           _ ->
-            Mix.raise("Failed to create demo tenant.")
+            Mix.raise("Failed to create tenant '#{slug}'.")
         end
     end
   end
@@ -207,11 +243,11 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     end
   end
 
-  defp seed_admin_user(app_module, email, password) do
+  defp seed_admin_user(app_module, tenant, email, password) do
     resource = Module.concat([app_module, "Accounts", "User"])
 
     if Code.ensure_loaded?(resource) do
-      register_admin_user(resource, email, password)
+      register_admin_user(resource, tenant, email, password)
     else
       Mix.shell().info(
         "    skip    Admin user (#{inspect(resource)} not present — run ash_authentication.install first)"
@@ -221,12 +257,18 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     end
   end
 
-  defp register_admin_user(resource, email, password) do
-    attrs = %{email: email, password: password, password_confirmation: password}
+  defp register_admin_user(resource, tenant, email, password) do
+    attrs = %{
+      email: email,
+      password: password,
+      password_confirmation: password,
+      role: :admin,
+      tenant_id: tenant.id
+    }
 
     case call_register(resource, attrs) do
       {:ok, user} ->
-        Mix.shell().info("    create  Admin user #{email}")
+        Mix.shell().info("    create  Admin user #{email} (role: :admin, tenant: #{tenant.id})")
         user
 
       {:error, _} ->
