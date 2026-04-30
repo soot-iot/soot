@@ -63,7 +63,7 @@
   "sobelow": {:hex, :sobelow, "0.14.1", "2f81e8632f15574cba2402bcddff5497b413c01e6f094bc0ab94e83c2f74db81", [:mix], [{:jason, "~> 1.0", [hex: :jason, repo: "hexpm", optional: false]}], "hexpm", "8fac9a2bd90fdc4b15d6fca6e1608efb7f7c600fa75800813b794ee9364c87f2"},
   "soot_admin": {:git, "https://github.com/soot-iot/soot_admin.git", "41ba751652e0d935960ea008c80aac5d32a1a711", [branch: "main"]},
   "soot_contracts": {:git, "https://github.com/soot-iot/soot_contracts.git", "d959cec3ffeda58a54378c7e4fb2629e930b26cf", [branch: "main"]},
-  "soot_core": {:git, "https://github.com/soot-iot/soot_core.git", "32d79e1d173941d1937259162db3874a26b3146f", [branch: "main"]},
+  "soot_core": {:git, "https://github.com/soot-iot/soot_core.git", "fb83e838f58f836b2c424c4b52d5261c730ecd15", [branch: "main"]},
   "soot_segments": {:git, "https://github.com/soot-iot/soot_segments.git", "e387e5d8e443be0d94b21e8cbf4a0233c7c2f604", [branch: "main"]},
   "soot_telemetry": {:git, "https://github.com/soot-iot/soot_telemetry.git", "98b3a6b888304cf2617fc93e09eb14a4a2b33b09", [branch: "main"]},
   "sourceror": {:hex, :sourceror, "1.12.0", "da354c5f35aad3cc1132f5d5b0d8437d865e2661c263260480bab51b5eedb437", [:mix], [], "hexpm", "755703683bd014ebcd5de9acc24b68fb874a660a568d1d63f8f98cd8a6ef9cd0"},
