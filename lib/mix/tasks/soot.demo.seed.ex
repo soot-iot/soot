@@ -103,23 +103,24 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
     |> Module.concat()
   end
 
-  # `authorize?: false` everywhere: the soot_core resources ship with
-  # default-deny policies allowing only `:enroller` /
-  # `:batch_provisioner` / `:device_shadow_writer` System actors
-  # (POLICY-SPEC §4.1). The demo seed is a setup-context task, not a
-  # request-handling code path, so it bypasses authorization the same
-  # way `test/support/factories.ex` does (sanctioned by POLICY-SPEC
-  # §5.1).
-  @ash_opts [authorize?: false]
+  # Every Ash call routes through the `:seed` System actor. The
+  # default policies on the six soot_core resources (POLICY-SPEC §4.1)
+  # accept `:seed` alongside their per-resource service actors
+  # (`:enroller`, `:batch_provisioner`, `:device_shadow_writer`), so a
+  # single actor is enough to seed the whole demo surface. This keeps
+  # the bypass visible in the policy DSL — preferable to
+  # `authorize?: false`, which `SootCore.Credo.NoAuthorizeFalse`
+  # refuses outside `test/support/` (POLICY-SPEC §5, §7).
+  defp ash_opts, do: [actor: SootCore.Actors.system(:seed)]
 
   defp seed_tenant do
-    case SootCore.Tenant.create("demo", "Demo Tenant", %{}, @ash_opts) do
+    case SootCore.Tenant.create("demo", "Demo Tenant", %{}, ash_opts()) do
       {:ok, tenant} ->
         Mix.shell().info("    create  Tenant 'demo'")
         tenant
 
       {:error, _} ->
-        case SootCore.Tenant.get_by_slug("demo", @ash_opts) do
+        case SootCore.Tenant.get_by_slug("demo", ash_opts()) do
           {:ok, tenant} ->
             Mix.shell().info("    exists  Tenant 'demo'")
             tenant
@@ -131,13 +132,13 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
   end
 
   defp seed_serial_scheme(tenant) do
-    case SootCore.SerialScheme.create(tenant.id, "demo-scheme", "DEMO-", %{}, @ash_opts) do
+    case SootCore.SerialScheme.create(tenant.id, "demo-scheme", "DEMO-", %{}, ash_opts()) do
       {:ok, scheme} ->
         Mix.shell().info("    create  SerialScheme 'DEMO-'")
         scheme
 
       {:error, _} ->
-        case SootCore.SerialScheme.for_tenant(tenant.id, @ash_opts) do
+        case SootCore.SerialScheme.for_tenant(tenant.id, ash_opts()) do
           {:ok, [scheme | _]} ->
             Mix.shell().info("    exists  SerialScheme 'DEMO-'")
             scheme
@@ -149,13 +150,13 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
   end
 
   defp seed_batch(tenant, scheme) do
-    case SootCore.ProductionBatch.create(tenant.id, scheme.id, "demo-batch-1", %{}, @ash_opts) do
+    case SootCore.ProductionBatch.create(tenant.id, scheme.id, "demo-batch-1", %{}, ash_opts()) do
       {:ok, batch} ->
         Mix.shell().info("    create  ProductionBatch 'demo-batch-1'")
         batch
 
       {:error, _} ->
-        case SootCore.ProductionBatch.for_tenant(tenant.id, @ash_opts) do
+        case SootCore.ProductionBatch.for_tenant(tenant.id, ash_opts()) do
           {:ok, [batch | _]} ->
             Mix.shell().info("    exists  ProductionBatch 'demo-batch-1'")
             batch
@@ -171,8 +172,8 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
       serial = "DEMO-#{String.pad_leading(Integer.to_string(i), 4, "0")}"
 
       find_or_create(
-        fn -> SootCore.Device.create_unprovisioned(tenant.id, serial, %{}, @ash_opts) end,
-        fn -> SootCore.Device.get_by_serial(tenant.id, serial, @ash_opts) end,
+        fn -> SootCore.Device.create_unprovisioned(tenant.id, serial, %{}, ash_opts()) end,
+        fn -> SootCore.Device.get_by_serial(tenant.id, serial, ash_opts()) end,
         "Device #{serial}"
       )
     end
@@ -188,13 +189,13 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
 
       shadow =
         find_or_create(
-          fn -> SootCore.DeviceShadow.create(device.id, %{}, @ash_opts) end,
-          fn -> SootCore.DeviceShadow.for_device(device.id, @ash_opts) end,
+          fn -> SootCore.DeviceShadow.create(device.id, %{}, ash_opts()) end,
+          fn -> SootCore.DeviceShadow.for_device(device.id, ash_opts()) end,
           "Shadow for device #{device.id}",
           quiet: true
         )
 
-      case SootCore.DeviceShadow.update_desired(shadow, desired, @ash_opts) do
+      case SootCore.DeviceShadow.update_desired(shadow, desired, ash_opts()) do
         {:ok, _updated} ->
           Mix.shell().info("    shadow  device #{device.serial} desired=#{inspect(desired)}")
           shadow
@@ -312,13 +313,13 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
   defp call_register(resource, attrs) do
     cond do
       function_exported?(resource, :register_with_password, 2) ->
-        resource.register_with_password(attrs, @ash_opts)
+        resource.register_with_password(attrs, ash_opts())
 
       function_exported?(resource, :register_with_password, 1) ->
         resource.register_with_password(attrs)
 
       function_exported?(resource, :create, 2) ->
-        resource.create(attrs, @ash_opts)
+        resource.create(attrs, ash_opts())
 
       function_exported?(resource, :create, 1) ->
         resource.create(attrs)
@@ -335,7 +336,7 @@ defmodule Mix.Tasks.Soot.Demo.Seed do
 
     resource
     |> Ash.Query.filter(^filter)
-    |> Ash.read_one(@ash_opts)
+    |> Ash.read_one(ash_opts())
     |> case do
       {:ok, nil} -> :error
       {:ok, record} -> {:ok, record}
