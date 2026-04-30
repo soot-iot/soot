@@ -1,0 +1,26 @@
+# Mosquitto broker overlay for the E2E reproducer. Pair with
+# `docker-compose.base.yml`:
+#
+#   docker compose -f scripts/docker-compose.base.yml \
+#                  -f scripts/docker-compose.mosquitto.yml up -d --wait
+#
+# Anonymous-allow on plain TCP. Real ACLs / mTLS are out of scope for
+# this reproducer (see PROBLEMS.md → "E2E brokers run anonymous-allow").
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: soot_e2e_mosquitto
+    command:
+      - sh
+      - -c
+      - |
+        printf 'listener 1883\nallow_anonymous true\n' > /mosquitto/config/mosquitto.conf
+        exec /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf
+    ports:
+      - "127.0.0.1:${SOOT_E2E_MQTT_PORT:-1883}:1883"
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -t healthcheck -W 1 -E || true"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
