@@ -263,3 +263,51 @@ real:
   `soot_contracts`, `soot`. Removing the keyword is a no-op cleanup;
   leaving it is harmless. Worth a sweep when one of those mix.exs
   files is touched for an unrelated reason.
+
+---
+
+## E2E reproducer scope limits
+
+`scripts/integration_e2e.sh` and `.github/workflows/integration.yml`
+exercise the README's Quickstart literally. The reproducer
+intentionally takes shortcuts that production deployments do not;
+keep them on this list so we don't forget which gaps the green-CI
+state is hiding.
+
+* **E2E brokers run anonymous-allow on plain TCP.** Both
+  `scripts/docker-compose.emqx.yml` (`EMQX_ALLOW_ANONYMOUS: "true"`)
+  and `scripts/docker-compose.mosquitto.yml`
+  (`allow_anonymous true`) skip ACLs, authentication, and TLS.
+  Acceptable for this reproducer — the goal is "does the README's
+  Quickstart wire bits end-to-end", not "does the production wire
+  path with mTLS + ash_pki-issued device certs + EMQX ACL/authn
+  rules survive". A second integration suite covering the
+  `mix soot.broker.gen_config` → `mix soot.broker.push.emqx` path
+  with mTLS-enforced listeners is a separate workstream and not
+  blocked by this one.
+
+* **`:soot` and `:soot_device` not on Hex.** The README's
+  `mix igniter.new my_iot --install soot ...` form assumes hex
+  resolution. Until the meta-packages are published, the E2E
+  reproducer uses the github form
+  (`--install soot@github:soot-iot/soot@<ref>`), parameterized via
+  `SOOT_E2E_REF` / `SOOT_DEVICE_E2E_REF`. The README does not
+  document this fallback. Update the README's Quickstart once Hex
+  publishing is in place; until then, README-following evaluators
+  will see "package soot not found" from hex.
+
+* **PR self-test on `soot-iot/soot`.** `integration.yml` passes
+  `${{ github.event.pull_request.head.sha || github.sha }}` as
+  `SOOT_E2E_REF` so the test exercises the PR's own commit. This
+  works for PRs from branches inside `soot-iot/soot` but does not
+  cover PRs from forks where the head SHA isn't fetchable from the
+  canonical repo. Fork PRs will fall back to whatever git resolves
+  the ref to (typically nothing — the `--install` step then fails).
+  Acceptable while the project is internal.
+
+* **Per-library cross-repo PRs are not exercised.** The script
+  resolves all `soot_*` / `ash_*` libraries through whatever SHAs
+  `mix.exs` / `mix.lock` of `soot-iot/soot@<ref>` pin. A PR to e.g.
+  `soot-iot/soot_core` is not tested against the umbrella until
+  someone bumps the lock here. Acceptable; per-library CI catches
+  per-library breakage.

@@ -1,0 +1,27 @@
+# EMQX broker overlay for the E2E reproducer. Pair with
+# `docker-compose.base.yml`:
+#
+#   docker compose -f scripts/docker-compose.base.yml \
+#                  -f scripts/docker-compose.emqx.yml up -d --wait
+#
+# Anonymous-allow on plain TCP. Real ACLs / mTLS are out of scope for
+# this reproducer (see PROBLEMS.md → "E2E brokers run anonymous-allow").
+
+services:
+  emqx:
+    image: emqx/emqx:5.8.0
+    container_name: soot_e2e_emqx
+    environment:
+      EMQX_ALLOW_ANONYMOUS: "true"
+      EMQX_LOG__CONSOLE_HANDLER__LEVEL: warning
+      EMQX_DASHBOARD__DEFAULT_USERNAME: admin
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: soot_e2e_admin
+    ports:
+      - "127.0.0.1:${SOOT_E2E_MQTT_PORT:-1883}:1883"
+      - "127.0.0.1:${SOOT_E2E_MQTTS_PORT:-8883}:8883"
+      - "127.0.0.1:${SOOT_E2E_EMQX_DASH_PORT:-18083}:18083"
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

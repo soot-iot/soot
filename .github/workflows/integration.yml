@@ -1,25 +1,33 @@
 name: Integration (E2E)
 
 # Full end-to-end integration test for the Soot framework. Generates
-# a backend and a Nerves device project from scratch, brings up real
-# Postgres / EMQX / ClickHouse, builds a qemu_aarch64 firmware,
-# boots it, and asserts wire-level protocol behavior.
+# a backend and a Nerves device project from scratch by running the
+# README's Quickstart literally — no path-deps, no `mix.exs` patching.
+# Brings up real Postgres / EMQX-or-Mosquitto / ClickHouse, builds a
+# qemu_aarch64 firmware, boots it, and asserts wire-level protocol
+# behavior.
 #
 # This is the gate that says "an evaluator following the README's
 # Quickstart from zero will end up with bits flowing." See
 # INTEGRATION-SPEC.md in the soot meta-package for the full design.
 #
+# EMQX and Mosquitto are split into independent matrix legs that
+# share only `scripts/integration_e2e.sh` and
+# `scripts/docker-compose.base.yml`. Each broker has its own overlay
+# (`docker-compose.emqx.yml` / `docker-compose.mosquitto.yml`) so a
+# change to one broker can't accidentally touch the other.
+#
 # Most of the work happens inside `scripts/integration_e2e.sh` —
 # this workflow is a thin wrapper around the same stages a developer
 # runs locally. If a step fails, reproduce locally with:
 #
-#   ./scripts/integration_e2e.sh setup
-#   ./scripts/integration_e2e.sh gen-backend
-#   ./scripts/integration_e2e.sh seed
-#   ./scripts/integration_e2e.sh start-backend
-#   ./scripts/integration_e2e.sh gen-device
-#   ./scripts/integration_e2e.sh build-firmware
-#   ./scripts/integration_e2e.sh boot-and-test
+#   SOOT_E2E_BROKER=emqx ./scripts/integration_e2e.sh setup
+#   SOOT_E2E_BROKER=emqx ./scripts/integration_e2e.sh gen-backend
+#   SOOT_E2E_BROKER=emqx ./scripts/integration_e2e.sh seed
+#   SOOT_E2E_BROKER=emqx ./scripts/integration_e2e.sh start-backend
+#   SOOT_E2E_BROKER=emqx ./scripts/integration_e2e.sh gen-device
+#   SOOT_E2E_BROKER=emqx ./scripts/integration_e2e.sh build-firmware
+#   SOOT_E2E_BROKER=emqx ./scripts/integration_e2e.sh boot-and-test
 
 on:
   push:
@@ -28,14 +36,14 @@ on:
       - 'lib/**'
       - 'priv/**'
       - 'scripts/integration_e2e.sh'
-      - 'scripts/docker-compose.e2e.yml'
+      - 'scripts/docker-compose.*.yml'
       - '.github/workflows/integration.yml'
   pull_request:
     paths:
       - 'lib/**'
       - 'priv/**'
       - 'scripts/integration_e2e.sh'
-      - 'scripts/docker-compose.e2e.yml'
+      - 'scripts/docker-compose.*.yml'
       - '.github/workflows/integration.yml'
   schedule:
     # Weekly nightly run to catch hex / Nerves system drift even when
@@ -51,7 +59,7 @@ concurrency:
 
 jobs:
   e2e:
-    name: E2E (broker=${{ matrix.broker }})
+    name: E2E (${{ matrix.broker }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -63,56 +71,16 @@ jobs:
     env:
       MIX_ENV: dev
       SOOT_E2E_BROKER: ${{ matrix.broker }}
+      # On PR runs, point `--install soot@github:soot-iot/soot@<ref>`
+      # at the PR's head SHA so the test exercises the code under
+      # review, not whatever's already on main. On push/schedule
+      # runs, fall back to the branch ref. soot-iot/soot must be
+      # public for fork PRs to resolve this; that's already the case.
+      SOOT_E2E_REF: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout soot meta-package
         uses: actions/checkout@v4
-        with:
-          path: soot
-
-      # The script generates a backend and device project against the
-      # in-tree code via path: deps. The `soot/..` parent directory is
-      # what `SOOT_E2E_WORKSPACE` points at; we lay the per-library
-      # repos out there as siblings, the same way local development
-      # has them. All soot-iot/* repos are public, so no token is
-      # required on these checkouts.
-      - name: Checkout per-library repos
-        uses: actions/checkout@v4
-        with:
-          repository: soot-iot/ash_pki
-          path: ash_pki
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/ash_mqtt
-          path: ash_mqtt
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/soot_core
-          path: soot_core
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/soot_telemetry
-          path: soot_telemetry
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/soot_segments
-          path: soot_segments
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/soot_contracts
-          path: soot_contracts
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/soot_admin
-          path: soot_admin
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/soot_device
-          path: soot_device
-      - uses: actions/checkout@v4
-        with:
-          repository: soot-iot/soot_device_protocol
-          path: soot_device_protocol
 
       # Nerves projects' generated config.exs reads ~/.ssh/*.pub at
       # compile time to populate authorized_keys for the firmware's
@@ -130,11 +98,8 @@ jobs:
           sudo apt-get install -y \
             qemu-system-arm \
             postgresql-client \
-            python3 \
             libmnl-dev \
             libssl-dev \
-            libconfuse-dev \
-            libarchive-dev \
             automake \
             autoconf \
             build-essential \
@@ -145,16 +110,6 @@ jobs:
           # by various Nerves transitive C deps. ClickHouse client
           # is unnecessary on the host — the script shells through
           # docker exec for any CH commands.
-
-      - name: Install fwup
-        run: |
-          # fwup is the Nerves firmware packager; it isn't in apt.
-          # Install from the upstream .deb release.
-          FWUP_VERSION="1.13.0"
-          wget -q -O /tmp/fwup.deb \
-            "https://github.com/fwup-home/fwup/releases/download/v${FWUP_VERSION}/fwup_${FWUP_VERSION}_amd64.deb"
-          sudo dpkg -i /tmp/fwup.deb || sudo apt-get install -fy
-          fwup --version
 
       - name: Set up BEAM
         uses: erlef/setup-beam@v1
@@ -170,34 +125,29 @@ jobs:
           mix archive.install --force hex phx_new
           mix archive.install --force hex nerves_bootstrap
 
-      # ---- Caches: deps, _build, ~/.nerves, ~/.hex ----
+      # ---- Caches: hex + per-broker generated builds + Nerves system ----
       - name: Restore Hex cache
         uses: actions/cache@v4
         with:
           path: ~/.hex
-          key: hex-${{ runner.os }}-${{ hashFiles('soot/mix.lock') }}
-          restore-keys: hex-${{ runner.os }}-
-
-      - name: Restore Mix deps + _build for soot meta-package
-        uses: actions/cache@v4
-        with:
-          path: |
-            soot/deps
-            soot/_build
-          key: mix-soot-${{ runner.os }}-${{ hashFiles('soot/mix.lock') }}
-          restore-keys: mix-soot-${{ runner.os }}-
+          key: hex-${{ runner.os }}-${{ matrix.broker }}-${{ hashFiles('mix.lock') }}
+          restore-keys: hex-${{ runner.os }}-${{ matrix.broker }}-
 
       - name: Restore /tmp/soot_e2e build caches (backend + device)
         uses: actions/cache@v4
         with:
           path: |
-            /tmp/soot_e2e/backend/_build
-            /tmp/soot_e2e/backend/deps
-            /tmp/soot_e2e/device/_build
-            /tmp/soot_e2e/device/deps
-          # Cache key must invalidate when any framework lib changes.
-          key: e2e-build-${{ runner.os }}-${{ hashFiles('soot/mix.lock', '*/mix.lock') }}
-          restore-keys: e2e-build-${{ runner.os }}-
+            /tmp/soot_e2e/my_iot/_build
+            /tmp/soot_e2e/my_iot/deps
+            /tmp/soot_e2e/my_device/_build
+            /tmp/soot_e2e/my_device/deps
+          # Cache key must invalidate when soot's deps change. The
+          # generated project's mix.lock isn't on disk yet; the soot
+          # meta-package's mix.lock pins all transitive github SHAs
+          # we'd resolve through `--install soot@github:...`, so it's
+          # the right invalidation signal.
+          key: e2e-build-${{ runner.os }}-${{ matrix.broker }}-${{ hashFiles('mix.lock') }}
+          restore-keys: e2e-build-${{ runner.os }}-${{ matrix.broker }}-
 
       - name: Restore Nerves system cache (qemu_aarch64 buildroot)
         uses: actions/cache@v4
@@ -210,45 +160,24 @@ jobs:
       # ---- Stages ----
 
       - name: Stage — setup (docker compose up)
-        working-directory: soot
-        env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
         run: ./scripts/integration_e2e.sh setup
 
       - name: Stage — gen-backend
-        working-directory: soot
-        env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
         run: ./scripts/integration_e2e.sh gen-backend
 
       - name: Stage — seed (PKI init + ash.setup + demo seed + device cert)
-        working-directory: soot
-        env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
         run: ./scripts/integration_e2e.sh seed
 
       - name: Stage — start-backend
-        working-directory: soot
-        env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
         run: ./scripts/integration_e2e.sh start-backend
 
       - name: Stage — gen-device
-        working-directory: soot
-        env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
         run: ./scripts/integration_e2e.sh gen-device
 
       - name: Stage — build-firmware
-        working-directory: soot
-        env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
         run: ./scripts/integration_e2e.sh build-firmware
 
       - name: Stage — boot-and-test
-        working-directory: soot
-        env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
         run: ./scripts/integration_e2e.sh boot-and-test
 
       # ---- Failure diagnostics ----
@@ -260,17 +189,10 @@ jobs:
           cat /tmp/soot_e2e/backend.log 2>/dev/null || echo "(no backend.log)"
           echo "::endgroup::"
 
-      - name: Device log (on failure)
-        if: failure()
-        run: |
-          echo "::group::device.log"
-          cat /tmp/soot_e2e/device.log 2>/dev/null || echo "(no device.log)"
-          echo "::endgroup::"
-
       - name: Service container logs (on failure)
         if: failure()
         run: |
-          for svc in soot_e2e_postgres soot_e2e_emqx soot_e2e_clickhouse; do
+          for svc in soot_e2e_postgres soot_e2e_emqx soot_e2e_mosquitto soot_e2e_clickhouse; do
             echo "::group::$svc"
             docker logs --tail 200 "$svc" 2>&1 || echo "(no $svc container)"
             echo "::endgroup::"
@@ -280,7 +202,7 @@ jobs:
         if: failure()
         run: |
           echo "::group::backend tree"
-          (cd /tmp/soot_e2e/backend 2>/dev/null && find . -type f \
+          (cd /tmp/soot_e2e/my_iot 2>/dev/null && find . -type f \
               -not -path './deps/*' -not -path './_build/*' \
               | head -100) || echo "(no backend dir)"
           echo "::endgroup::"
@@ -289,8 +211,6 @@ jobs:
 
       - name: Teardown
         if: always()
-        working-directory: soot
         env:
-          SOOT_E2E_WORKSPACE: ${{ github.workspace }}
           SOOT_E2E_KEEP_TMP: "1"   # keep /tmp/soot_e2e so cache can persist
         run: ./scripts/integration_e2e.sh teardown
