@@ -99,6 +99,47 @@ defmodule Mix.Tasks.Soot.InstallTest do
     end
   end
 
+  describe "register_path stripping (typical sign_in_route shape)" do
+    # Keep the regex tight enough that the result is parseable Elixir.
+    # `ash_authentication_phoenix.install` typically generates the
+    # `sign_in_route` call with no parens and `register_path:` as the
+    # first kwarg, and that's what the install task strips.
+    @router_with_sign_in """
+    defmodule TestWeb.Router do
+      use TestWeb, :router
+
+      scope "/", TestWeb do
+        sign_in_route register_path: "/register",
+                      reset_path: "/reset",
+                      auth_routes_prefix: "/auth",
+                      on_mount: [{TestWeb.LiveUserAuth, :live_no_user}]
+      end
+    end
+    """
+
+    test "drops register_path: kwarg and the result is parseable Elixir" do
+      project =
+        test_project(files: %{"lib/test_web/router.ex" => @router_with_sign_in})
+        |> Igniter.Project.Application.create_app(Test.Application)
+        |> apply_igniter!()
+        |> Igniter.include_existing_file("lib/test_web/router.ex")
+        |> Igniter.compose_task("soot.install", [])
+
+      content =
+        project.rewrite.sources["lib/test_web/router.ex"]
+        |> Rewrite.Source.get(:content)
+
+      refute content =~ "register_path:"
+      assert content =~ "sign_in_route"
+      assert content =~ "reset_path:"
+
+      # Crucially: still parses as Elixir. The formatter would have
+      # rejected my regex output otherwise (cf. soot#14 CI failure
+      # before this regex was tightened).
+      assert {:ok, _ast} = Code.string_to_quoted(content)
+    end
+  end
+
   describe "router patching" do
     test "adds the :device_mtls pipeline" do
       setup_project()
