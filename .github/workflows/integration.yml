@@ -111,6 +111,18 @@ jobs:
           # is unnecessary on the host — the script shells through
           # docker exec for any CH commands.
 
+      - name: Install fwup
+        run: |
+          # `mix firmware` shells out to `fwup` to assemble the .fw
+          # image. fwup isn't in Ubuntu's repos — pull a pinned
+          # release deb from the upstream project. Bump the version
+          # below when testing against newer Nerves releases.
+          FWUP_VERSION=1.13.0
+          curl -fsSL -o /tmp/fwup.deb \
+            "https://github.com/fwup-home/fwup/releases/download/v${FWUP_VERSION}/fwup_${FWUP_VERSION}_amd64.deb"
+          sudo apt-get install -y /tmp/fwup.deb
+          fwup --version
+
       - name: Set up BEAM
         uses: erlef/setup-beam@v1
         with:
