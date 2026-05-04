@@ -133,6 +133,7 @@ if Code.ensure_loaded?(Igniter) do
       |> generate_example_shadow(options)
       |> mount_device_pipeline()
       |> patch_broker_runtime_config()
+      |> patch_clickhouse_runtime_config()
       |> patch_user_resource()
       |> patch_router_disable_registration()
       |> note_next_steps(options)
@@ -483,6 +484,35 @@ if Code.ensure_loaded?(Igniter) do
       |> set_runtime_env(:ash_mqtt, [:key_path], "priv/pki/server_key.pem", "SOOT_BROKER_KEY")
     end
 
+    # Threads ClickHouse connection settings into `config/runtime.exs`
+    # so the same release can target a different cluster per env. The
+    # URL knob seeds `:soot_telemetry, :clickhouse_url` (the key the
+    # writer setup notice already documents); username/password seed
+    # the keys `SootTelemetry.Writer.ClickHouse` reads at boot, so an
+    # E2E run that exports `SOOT_CH_USER` / `SOOT_CH_PASSWORD` reaches
+    # ClickHouse with non-default credentials without recompiling.
+    defp patch_clickhouse_runtime_config(igniter) do
+      igniter
+      |> set_runtime_env(
+        :soot_telemetry,
+        [:clickhouse_url],
+        "http://localhost:8123",
+        "SOOT_CH_URL"
+      )
+      |> set_runtime_env(
+        :soot_telemetry,
+        [SootTelemetry.Writer.ClickHouse, :username],
+        "default",
+        "SOOT_CH_USER"
+      )
+      |> set_runtime_env(
+        :soot_telemetry,
+        [SootTelemetry.Writer.ClickHouse, :password],
+        "",
+        "SOOT_CH_PASSWORD"
+      )
+    end
+
     defp set_runtime_env(igniter, app, key_path, default, env_var) do
       Igniter.Project.Config.configure(
         igniter,
@@ -665,6 +695,11 @@ if Code.ensure_loaded?(Igniter) do
           SOOT_BROKER_CA     default priv/pki/trust_bundle.pem
           SOOT_BROKER_CERT   default priv/pki/server_chain.pem
           SOOT_BROKER_KEY    default priv/pki/server_key.pem
+
+        ClickHouse connection (in config/runtime.exs) reads from env:
+          SOOT_CH_URL        default http://localhost:8123
+          SOOT_CH_USER       default default
+          SOOT_CH_PASSWORD   default ""
 
         After `mix soot.broker.gen_config`, push the rendered EMQX
         bundle with:
