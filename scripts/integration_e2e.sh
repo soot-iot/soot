@@ -399,8 +399,25 @@ stage_boot_and_test() {
   log "=== boot-and-test ==="
   cd "$DEVICE_DIR"
 
+  # `soot_device.install` generates a `config/config.exs` that
+  # defaults `:persistence_dir` to `/data/soot` — a Nerves-target
+  # path that doesn't exist on the host. `mix test` boots the
+  # device application on the host before any test runs, so
+  # `MyDevice.SootDeviceConfig.device_opts/1` calls
+  # `SootDeviceProtocol.Storage.Local.open!("/data/soot")` and the
+  # whole BEAM exits with `:enoent`. The generated config wires
+  # `<APP>_PERSISTENCE_DIR` as an env-var override; point it at a
+  # writable temp dir so the host boot succeeds. The actual
+  # firmware running under QEMU keeps the `/data/soot` default —
+  # this only affects host-side `mix test`.
+  app="$(basename "$DEVICE_DIR")"
+  env_prefix="$(echo "$app" | tr '[:lower:]-' '[:upper:]_')"
+  host_storage="$TMP/${app}_host_storage"
+  mkdir -p "$host_storage"
+  log "setting ${env_prefix}_PERSISTENCE_DIR=$host_storage for host mix test boot"
+
   log "mix test --include qemu --include e2e"
-  mix test --include qemu --include e2e
+  env "${env_prefix}_PERSISTENCE_DIR=$host_storage" mix test --include qemu --include e2e
 }
 
 # --------------------------------------------------------------------
