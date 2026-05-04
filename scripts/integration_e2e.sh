@@ -466,8 +466,15 @@ stage_boot_and_test() {
   log "  SOOT_PERSISTENCE_DIR=$host_storage"
   log "  ${env_prefix}_PERSISTENCE_DIR=$host_storage"
 
+  # Force MIX_ENV=test for the test run. The workflow exports
+  # `MIX_ENV=dev` for the build-firmware stage; if we let that bleed
+  # through, the device project's `elixirc_paths(:test) ++
+  # ["test/support"]` clause never fires and `<App>.QEMU` (planted
+  # there by `mix soot_device.gen.tests`) is missing — every QEMU
+  # test then dies with `UndefinedFunctionError`.
   log "mix test --include qemu --include e2e"
   env \
+    "MIX_ENV=test" \
     "SOOT_BOOTSTRAP_CERT=$bootstrap_pem" \
     "SOOT_BOOTSTRAP_KEY=$bootstrap_key" \
     "SOOT_PERSISTENCE_DIR=$host_storage" \
