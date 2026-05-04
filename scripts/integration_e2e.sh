@@ -81,6 +81,14 @@ export SOOT_E2E_MQTTS_PORT="${SOOT_E2E_MQTTS_PORT:-8883}"
 export SOOT_E2E_EMQX_DASH_PORT="${SOOT_E2E_EMQX_DASH_PORT:-18083}"
 export SOOT_E2E_CH_HTTP_PORT="${SOOT_E2E_CH_HTTP_PORT:-8123}"
 export SOOT_E2E_CH_TCP_PORT="${SOOT_E2E_CH_TCP_PORT:-9000}"
+# ClickHouse credentials — must match the user/password the compose
+# file at scripts/docker-compose.base.yml provisions. The backend
+# release reads these via runtime.exs (`SOOT_CH_USER` / `_PASSWORD` /
+# `_URL`) thanks to the patch in `mix soot.install`. Default user is
+# `soot` / `soot` to match the compose; override here if the operator
+# is reusing a pre-existing ClickHouse instance.
+export SOOT_E2E_CH_USER="${SOOT_E2E_CH_USER:-soot}"
+export SOOT_E2E_CH_PASSWORD="${SOOT_E2E_CH_PASSWORD:-soot}"
 export SOOT_E2E_BACKEND_PORT="${SOOT_E2E_BACKEND_PORT:-4000}"
 
 COMPOSE_BASE="$SOOT_REPO/scripts/docker-compose.base.yml"
@@ -306,8 +314,18 @@ stage_start_backend() {
     return 0
   fi
 
+  # ClickHouse runs with non-default credentials in the compose file.
+  # Thread the matching SOOT_CH_* vars into the backend environment so
+  # `SootTelemetry.Writer.ClickHouse` (configured via the runtime.exs
+  # block planted by `mix soot.install`) authenticates against the
+  # local cluster instead of falling back to user `default` with an
+  # empty password.
   log "starting backend (mix phx.server, PORT=$SOOT_E2E_BACKEND_PORT)"
-  PORT="$SOOT_E2E_BACKEND_PORT" nohup mix phx.server >"$BACKEND_LOG" 2>&1 &
+  PORT="$SOOT_E2E_BACKEND_PORT" \
+    SOOT_CH_URL="http://localhost:$SOOT_E2E_CH_HTTP_PORT" \
+    SOOT_CH_USER="$SOOT_E2E_CH_USER" \
+    SOOT_CH_PASSWORD="$SOOT_E2E_CH_PASSWORD" \
+    nohup mix phx.server >"$BACKEND_LOG" 2>&1 &
   echo $! > "$BACKEND_PIDFILE"
 
   # We can't hit /.well-known/soot/contract from the host without a
