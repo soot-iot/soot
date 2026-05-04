@@ -269,9 +269,11 @@ defmodule Mix.Tasks.Soot.Seed do
   end
 
   defp register_admin_user(resource, tenant, email) do
-    attrs = %{email: email, role: :admin, tenant_id: tenant.id}
+    # `:role` is hardcoded by the action's `change set_attribute(:role,
+    # :admin)`, so it isn't an argument the seed passes here.
+    args = %{email: email, tenant_id: tenant.id}
 
-    case Ash.create(resource, attrs,
+    case Ash.create(resource, args,
            action: :register_admin,
            actor: SootCore.Actors.system(:seed)
          ) do
