@@ -534,12 +534,23 @@ if Code.ensure_loaded?(Igniter) do
           magic-link strategy doesn't block legitimate operator
           onboarding (`mix soot.seed`, ops scripts, admin-onboards-
           admin flows).
+
+          Uses arguments + `change set_attribute(...)` (the same
+          pattern as `:sign_in_with_magic_link`) instead of `accept`
+          because Spark's compile-time `accept` validator runs
+          before AshAuthentication's `:email` attribute is observable
+          in this resource module's DSL state.
           \"\"\"
 
-          accept [:email, :role, :tenant_id]
+          argument :email, :ci_string, allow_nil?: false
+          argument :tenant_id, :uuid, allow_nil?: false
+
+          change set_attribute(:email, arg(:email))
+          change set_attribute(:role, :admin)
+          change set_attribute(:tenant_id, arg(:tenant_id))
+
           upsert? true
           upsert_identity :unique_email
-          upsert_fields [:email, :role, :tenant_id]
         end
         """)
         |> Ash.Resource.Igniter.add_policy(
