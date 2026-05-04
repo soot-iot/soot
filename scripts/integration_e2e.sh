@@ -22,7 +22,7 @@
 #
 #   setup          docker compose up + verify tooling
 #   gen-backend    mix igniter.new --with phx.new --install db_connection@...,soot@github:...
-#   seed           ash_pki.init + ash.setup + soot.demo.seed
+#   seed           ash_pki.init + ash.setup + soot.seed --demo
 #   start-backend  mix phx.server in background, wait for /
 #   gen-device     mix igniter.new --with nerves.new + mix igniter.install soot_device@github:...
 #   build-firmware MIX_TARGET=qemu_aarch64 mix firmware
@@ -284,8 +284,8 @@ stage_seed() {
   log "mix ash.setup"
   mix ash.setup
 
-  log "mix soot.demo.seed"
-  mix soot.demo.seed
+  log "mix soot.seed --demo"
+  mix soot.seed --demo
 
   log "mix ash_pki.gen.cert (bootstrap cert for the demo device)"
   mix ash_pki.gen.cert \
