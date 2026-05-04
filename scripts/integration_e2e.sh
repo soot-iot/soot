@@ -399,25 +399,49 @@ stage_boot_and_test() {
   log "=== boot-and-test ==="
   cd "$DEVICE_DIR"
 
-  # `soot_device.install` generates a `config/config.exs` that
-  # defaults `:persistence_dir` to `/data/soot` — a Nerves-target
-  # path that doesn't exist on the host. `mix test` boots the
-  # device application on the host before any test runs, so
-  # `MyDevice.SootDeviceConfig.device_opts/1` calls
-  # `SootDeviceProtocol.Storage.Local.open!("/data/soot")` and the
-  # whole BEAM exits with `:enoent`. The generated config wires
-  # `<APP>_PERSISTENCE_DIR` as an env-var override; point it at a
-  # writable temp dir so the host boot succeeds. The actual
-  # firmware running under QEMU keeps the `/data/soot` default —
-  # this only affects host-side `mix test`.
+  # `mix test` boots the device application on the host before any
+  # test runs. The generated `device.ex` and `config.exs` default
+  # several paths to Nerves-target paths that don't exist on the
+  # host (e.g. `/data/soot`, `/etc/soot/bootstrap.pem`). The
+  # generated stubs wire env-var overrides; populate them with
+  # host-friendly values pointing at the seed-stage outputs so
+  # `SootDevice.Runtime.start_link/2` succeeds. The actual firmware
+  # running under QEMU keeps the target paths via the rootfs_overlay.
+  #
+  # Note: `SOOT_BOOTSTRAP_CERT` / `SOOT_BOOTSTRAP_KEY` /
+  # `SOOT_PERSISTENCE_DIR` feed the `device.ex` DSL at compile
+  # time, so they must be set before `mix test` triggers the
+  # test-env compile. `<APP>_PERSISTENCE_DIR` feeds runtime
+  # `Application.fetch_env(:my_device, :persistence_dir)` via
+  # the generated `config/config.exs`. We set both because the
+  # generated `MyDevice.SootDeviceConfig.device_opts/1` overrides
+  # the DSL `storage_dir` with the runtime value but the DSL is
+  # still evaluated.
   app="$(basename "$DEVICE_DIR")"
   env_prefix="$(echo "$app" | tr '[:lower:]-' '[:upper:]_')"
   host_storage="$TMP/${app}_host_storage"
   mkdir -p "$host_storage"
-  log "setting ${env_prefix}_PERSISTENCE_DIR=$host_storage for host mix test boot"
+
+  bootstrap_pem="$BACKEND_DIR/priv/pki/demo-device-001.cert.pem"
+  bootstrap_key="$BACKEND_DIR/priv/pki/demo-device-001.key.pem"
+
+  if [[ ! -f "$bootstrap_pem" || ! -f "$bootstrap_key" ]]; then
+    fail "demo bootstrap cert/key not found at $bootstrap_pem — run \`seed\` first"
+  fi
+
+  log "host overrides:"
+  log "  SOOT_BOOTSTRAP_CERT=$bootstrap_pem"
+  log "  SOOT_BOOTSTRAP_KEY=$bootstrap_key"
+  log "  SOOT_PERSISTENCE_DIR=$host_storage"
+  log "  ${env_prefix}_PERSISTENCE_DIR=$host_storage"
 
   log "mix test --include qemu --include e2e"
-  env "${env_prefix}_PERSISTENCE_DIR=$host_storage" mix test --include qemu --include e2e
+  env \
+    "SOOT_BOOTSTRAP_CERT=$bootstrap_pem" \
+    "SOOT_BOOTSTRAP_KEY=$bootstrap_key" \
+    "SOOT_PERSISTENCE_DIR=$host_storage" \
+    "${env_prefix}_PERSISTENCE_DIR=$host_storage" \
+    mix test --include qemu --include e2e
 }
 
 # --------------------------------------------------------------------

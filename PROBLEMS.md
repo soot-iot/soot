@@ -350,29 +350,81 @@ state is hiding.
   pattern the meta-package already uses. Either is fine; pick one
   per library and stick with it.
 
-  **Impact on the E2E run.** The errors are emitted at runtime
-  during DSL verification but don't crash the BEAM — the backend
-  still serves HTTP and the `boot-and-test` stage's QEMU
-  assertions don't load these resources. So this isn't a blocker
-  for getting PR #13 green; it's a real bug that needs follow-up
-  PRs to ash_pki, soot_segments, soot_contracts (and soot_core
-  for consistency).
+  **Impact.** Errors are emitted at runtime during DSL verification.
+  The backend supervisor catches and the HTTP path stays up, but
+  any code path that loads these resources crashes —
+  `MyIot.Certificate`, `MyIot.SegmentRow`, `MyIot.BundleRow`, etc.
+  are unusable. Real telemetry / contract / certificate operations
+  through the umbrella will hit this. Cross-repo follow-up: PRs
+  to ash_pki, soot_segments, soot_contracts.
 
 * **ClickHouse credentials not threaded through `soot.install`.**
   `scripts/docker-compose.base.yml` brings ClickHouse up with
   `CLICKHOUSE_USER: soot / CLICKHOUSE_PASSWORD: soot`, but the
   generated project's `:ch` config uses driver defaults (user
-  `default`, no password) and connect attempts fail with
-  `Code: 194 Authentication failed`. soot.install configures
-  `SOOT_BROKER_*` env vars at
-  `soot/lib/mix/tasks/soot.install.ex:459-468` but has no
-  equivalent for ClickHouse. Follow-up: add `SOOT_CH_URL` /
-  `SOOT_CH_USER` / `SOOT_CH_PASSWORD` env knobs in soot.install,
+  `default`, no password) and connect attempts fail every few
+  seconds with `Code: 194 Authentication failed` for the lifetime
+  of the backend process. soot.install configures `SOOT_BROKER_*`
+  env vars at `soot/lib/mix/tasks/soot.install.ex:459-468` but
+  has no equivalent for ClickHouse. Follow-up: add `SOOT_CH_URL`
+  / `SOOT_CH_USER` / `SOOT_CH_PASSWORD` env knobs in soot.install,
   default them to match the docker-compose creds, and document
-  in the README. Doesn't currently block the E2E (telemetry
-  ingest never fires from the boot-and-test smoke tests) but is
-  the next thing that'll bite once the device starts pushing
-  telemetry.
+  in the README. **Required** before the E2E can assert anything
+  about telemetry ingest.
+
+* **Postgres "database my_iot_dev does not exist" after seed.**
+  Backend logs spam this every connection-pool reconnect. `seed`
+  runs `mix ash.setup` which calls `mix ash_postgres.create` and
+  succeeds; the database exists when seed completes. Something
+  later — possibly the dashboard, possibly an MIX_ENV split
+  during `mix phx.server` — looks for the database under a
+  different name or env. Not yet root-caused. Doesn't block the
+  HTTP path so probably a sub-pool, but worth tracing.
+
+* **Bootstrap cert path baked at compile time.** `soot_device.install`
+  generates `device.ex` with
+  `bootstrap_cert_path System.get_env("SOOT_BOOTSTRAP_CERT", "/etc/soot/bootstrap.pem")`.
+  The DSL is evaluated at compile time, so the env var must be
+  set BEFORE `mix test` triggers the test-env compile, not at
+  runtime. The script's `boot-and-test` stage now sets
+  `SOOT_BOOTSTRAP_CERT` / `SOOT_BOOTSTRAP_KEY` /
+  `SOOT_PERSISTENCE_DIR` pointing at the seed-stage outputs so
+  host `mix test` boot succeeds. Only a script-side workaround;
+  the underlying brittleness (target-only paths baked at
+  compile-time with no Application-config layer) lives in
+  `soot_device.install`.
+
+* **`boot-and-test` runs an empty test suite.** The big one.
+  `mix test --include qemu --include e2e` runs against a
+  generated `my_device` project that contains:
+
+    - `test/my_device_test.exs` — the `mix nerves.new` boilerplate
+      (one trivial test, no qemu/e2e tag)
+    - `test/support/qemu.ex` — the QEMU helper module (no tests)
+    - `test/test_helper.exs` — boilerplate
+
+  `soot_device.install` scaffolds the QEMU helper but writes
+  zero tests that use it. There are no `:qemu` tests, no `:e2e`
+  tests, no enrollment assertion, no contract-fetch assertion,
+  no telemetry-publish-and-receive assertion. **Even when this
+  stage turns green, it asserts nothing about device behavior.**
+
+  This means PR #13's E2E in its current shape is structural
+  scaffolding, not validation. Getting it "green" is necessary
+  but not sufficient.
+
+  Plan, in order:
+    1. Land PR #13 once the script structurally succeeds
+       (no fake-green claims in the description).
+    2. soot_device upstream: add an on-device test suite that
+       runs from inside QEMU and validates device behavior
+       *without* requiring a working backend (per project
+       direction 2026-05-04).
+    3. soot meta-package: add backend-paired E2E assertions
+       (device enrolls → backend has cert; device publishes →
+       ClickHouse row appears; device fetches contract →
+       fingerprint matches). Requires the ClickHouse-creds gap
+       and the resource-domain gap to be fixed first.
 
 * **Per-library cross-repo PRs are not exercised.** The script
   resolves all `soot_*` / `ash_*` libraries through whatever SHAs
