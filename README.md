@@ -139,12 +139,14 @@ The same Quickstart commands above, but run end-to-end against real
 infrastructure (Postgres + EMQX *or* Mosquitto + ClickHouse in
 Docker) plus a Nerves device booted under QEMU. The reproducer is
 [`scripts/integration_e2e.sh`](scripts/integration_e2e.sh) and it
-runs the README's Quickstart literally — `mix igniter.new ...`,
-then `mix igniter.install soot@github:soot-iot/soot`, then the
-device-side `mix igniter.new --with nerves.new ... mix
-igniter.install soot_device@github:soot-iot/soot_device`. **No
-`path:` deps, no `mix.exs` patching.** If the README's commands
-regress, this script regresses with them; that's the entire point.
+runs the README's Quickstart literally —
+`mix igniter.new my_iot --with phx.new --install db_connection@2.9.0,soot@github:soot-iot/soot`
+for the backend, then the matching device-side
+`mix igniter.new my_device --with nerves.new --install soot_device@github:soot-iot/soot_device`
+followed by a `mix igniter.install soot_device@github:...` to pass
+the seed-stage bootstrap cert via `--bootstrap-cert`. **No `path:`
+deps, no `mix.exs` patching.** If the README's commands regress,
+this script regresses with them; that's the entire point.
 
 EMQX and Mosquitto are split into independent runs that share only
 the script and a `docker-compose.base.yml` (Postgres + ClickHouse).
