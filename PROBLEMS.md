@@ -318,6 +318,62 @@ state is hiding.
   the ref to (typically nothing — the `--install` step then fails).
   Acceptable while the project is internal.
 
+* **Generated consumer resources point at the library domain that
+  doesn't accept them.** Surfaced 2026-05-04 in PR #13's E2E run.
+  Each per-library installer (`ash_pki.install`, `soot_core.install`,
+  `soot_segments.install`, `soot_contracts.install`) generates
+  `lib/<app>/<resource>.ex` with a hard-coded
+  `domain: <Lib>.Domain` line. The library-side domains list only
+  the library's own internal resources, so the consumer module
+  fails verification at module load with:
+
+      ** (RuntimeError) Resource MyIot.SegmentVersion declared that
+      its domain is SootSegments.Domain, but that domain does not
+      accept this resource.
+
+  Specifically:
+
+  | library | install task | generated resources | library domain accepts? |
+  |---------|--------------|---------------------|-------------------------|
+  | `ash_pki`        | hard-codes `domain: AshPki.Domain`        | CertificateAuthority, Certificate, RevocationList, EnrollmentToken | no |
+  | `soot_core`      | hard-codes `domain: SootCore.Domain`      | Tenant, SerialScheme, ProductionBatch, Device, DeviceShadow, EnrollmentToken | yes (`allow_unregistered? true`) |
+  | `soot_segments`  | hard-codes `domain: SootSegments.Domain`  | SegmentRow, SegmentVersion | no |
+  | `soot_contracts` | hard-codes `domain: SootContracts.Domain` | BundleRow | no |
+
+  **Fix path (cross-repo).** Each library either (a) adds
+  `allow_unregistered? true` to its `<Lib>.Domain` resources block
+  (what soot_core already does), or (b) appends
+  `validate_domain_inclusion?: false` to the generated consumer
+  module body (what `soot.install`'s `--example` shadow generator
+  does at `soot/lib/mix/tasks/soot.install.ex:331`). Option (a)
+  is one line per library. Option (b) is consistent with the
+  pattern the meta-package already uses. Either is fine; pick one
+  per library and stick with it.
+
+  **Impact on the E2E run.** The errors are emitted at runtime
+  during DSL verification but don't crash the BEAM — the backend
+  still serves HTTP and the `boot-and-test` stage's QEMU
+  assertions don't load these resources. So this isn't a blocker
+  for getting PR #13 green; it's a real bug that needs follow-up
+  PRs to ash_pki, soot_segments, soot_contracts (and soot_core
+  for consistency).
+
+* **ClickHouse credentials not threaded through `soot.install`.**
+  `scripts/docker-compose.base.yml` brings ClickHouse up with
+  `CLICKHOUSE_USER: soot / CLICKHOUSE_PASSWORD: soot`, but the
+  generated project's `:ch` config uses driver defaults (user
+  `default`, no password) and connect attempts fail with
+  `Code: 194 Authentication failed`. soot.install configures
+  `SOOT_BROKER_*` env vars at
+  `soot/lib/mix/tasks/soot.install.ex:459-468` but has no
+  equivalent for ClickHouse. Follow-up: add `SOOT_CH_URL` /
+  `SOOT_CH_USER` / `SOOT_CH_PASSWORD` env knobs in soot.install,
+  default them to match the docker-compose creds, and document
+  in the README. Doesn't currently block the E2E (telemetry
+  ingest never fires from the boot-and-test smoke tests) but is
+  the next thing that'll bite once the device starts pushing
+  telemetry.
+
 * **Per-library cross-repo PRs are not exercised.** The script
   resolves all `soot_*` / `ash_*` libraries through whatever SHAs
   `mix.exs` / `mix.lock` of `soot-iot/soot@<ref>` pin. A PR to e.g.
