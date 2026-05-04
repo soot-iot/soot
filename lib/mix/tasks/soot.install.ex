@@ -561,14 +561,16 @@ if Code.ensure_loaded?(Igniter) do
         else: igniter
     end
 
+    # Removes a `register_path: "..."` keyword from `sign_in_route`.
+    # Matches the kwarg + trailing comma + the whitespace/newline that
+    # would otherwise leave the next line with its indent intact, so
+    # the result is the same shape with the next kwarg taking its
+    # place. Only matches when register_path is followed by another
+    # kwarg (the common template case); the trailing-comma form is
+    # what `ash_authentication_phoenix.install` emits.
     defp drop_register_path(source) do
       content = Rewrite.Source.get(source, :content)
-
-      updated =
-        content
-        |> String.replace(~r/\s*register_path:\s*"[^"]+",?\n/, "\n")
-        |> String.replace(~r/sign_in_route\(\s*\n/, "sign_in_route(")
-
+      updated = String.replace(content, ~r/register_path:\s*"[^"]+",[ \t]*\n[ \t]*/, "")
       Rewrite.Source.update(source, :content, updated)
     end
 
