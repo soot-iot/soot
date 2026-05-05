@@ -130,6 +130,7 @@ if Code.ensure_loaded?(Igniter) do
       igniter
       |> include_existing_marker_files()
       |> compose_children(child_argv)
+      |> ensure_citext_extension()
       |> generate_example_shadow(options)
       |> mount_device_pipeline()
       |> patch_broker_runtime_config()
@@ -137,6 +138,40 @@ if Code.ensure_loaded?(Igniter) do
       |> patch_user_resource()
       |> patch_router_disable_registration()
       |> note_next_steps(options)
+    end
+
+    # `ash_authentication.install` generates a `User` resource with a
+    # `:ci_string` email attribute. AshPostgres maps `:ci_string` to
+    # the `:citext` Postgres column type, so the generated migration
+    # creates `users.email` as `:citext`. The extension itself is only
+    # installed if `"citext"` is present in the consumer Repo's
+    # `installed_extensions/0` callback.
+    #
+    # `ash_authentication.install` itself calls
+    # `AshPostgres.Igniter.add_postgres_extension(repo, "citext")` in
+    # its `setup_data_layer/2` step, but in practice that addition has
+    # been observed to not land in the on-disk Repo file when composed
+    # via the soot install chain — `mix ash.setup` on a fresh
+    # `postgres:16` then crashes with `type "citext" does not exist`
+    # before any DDL applies. See PROBLEMS.md → carry-over tech debt.
+    #
+    # Add it explicitly here as belt-and-braces: locate the consumer
+    # Repo and append `"citext"` to `installed_extensions/0` if not
+    # already there. `add_postgres_extension/3` is idempotent (it
+    # uses `Igniter.Code.List.append_new_to_list/2`), so running this
+    # after `ash_authentication.install`'s own attempt is safe.
+    defp ensure_citext_extension(igniter) do
+      if Code.ensure_loaded?(AshPostgres.Igniter) do
+        case AshPostgres.Igniter.list_repos(igniter) do
+          {igniter, [repo | _]} ->
+            AshPostgres.Igniter.add_postgres_extension(igniter, repo, "citext")
+
+          {igniter, []} ->
+            igniter
+        end
+      else
+        igniter
+      end
     end
 
     # `phx.new --database postgres` creates `lib/<app>/repo.ex` before

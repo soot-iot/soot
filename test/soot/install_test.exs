@@ -297,6 +297,65 @@ defmodule Mix.Tasks.Soot.InstallTest do
     end
   end
 
+  describe "citext extension on the consumer Repo" do
+    # `ash_authentication.install`'s `User` resource has a `:ci_string`
+    # email attribute → AshPostgres emits a `:citext` migration column.
+    # On a fresh `postgres:16`, `mix ash.setup` then crashes with
+    # `type "citext" does not exist` unless `"citext"` is in
+    # `installed_extensions/0`. soot.install adds it explicitly as
+    # belt-and-braces (ash_authentication.install's own setup_data_layer
+    # has been observed not to land in the on-disk Repo when composed
+    # via the soot chain).
+    @repo_with_ash_functions_only """
+    defmodule Test.Repo do
+      use AshPostgres.Repo, otp_app: :test
+
+      @impl true
+      def installed_extensions do
+        ["ash-functions"]
+      end
+
+      @impl true
+      def min_pg_version do
+        %Version{major: 16, minor: 0, patch: 0}
+      end
+    end
+    """
+
+    defp project_with_existing_repo do
+      test_project(
+        files: %{
+          "lib/test_web/endpoint.ex" => @endpoint,
+          "lib/test_web/router.ex" => @router,
+          "lib/test/repo.ex" => @repo_with_ash_functions_only
+        }
+      )
+      |> Igniter.Project.Application.create_app(Test.Application)
+      |> apply_igniter!()
+      |> Igniter.include_existing_file("lib/test/repo.ex")
+    end
+
+    test "adds citext to the consumer Repo's installed_extensions/0" do
+      result =
+        project_with_existing_repo()
+        |> Igniter.compose_task("soot.install", [])
+
+      diff = diff(result, only: "lib/test/repo.ex")
+
+      assert diff =~ "installed_extensions"
+      assert diff =~ ~s|"citext"|
+      assert diff =~ ~s|"ash-functions"|
+    end
+
+    test "is idempotent — re-running soot.install does not duplicate citext" do
+      project_with_existing_repo()
+      |> Igniter.compose_task("soot.install", [])
+      |> apply_igniter!()
+      |> Igniter.compose_task("soot.install", [])
+      |> assert_unchanged("lib/test/repo.ex")
+    end
+  end
+
   describe "running on a project without a router" do
     test "emits a warning rather than crashing" do
       igniter =
