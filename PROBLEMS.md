@@ -270,3 +270,212 @@ state is hiding.
   pinned. Keep the override mechanism in the script — not the
   workflow — so the same override is reproducible locally
   (`SOOT_E2E_OVERRIDES=... ./scripts/integration_e2e.sh all`).
+
+---
+
+## README walkthrough findings (2026-05-05)
+
+A literal run of the README "Quickstart" against `origin/main`
+(`e3a5f90`) on a developer machine — `mix igniter.new`, then
+`mix ash.setup`, then `mix soot.demo.seed`, then `mix phx.server`.
+Generated app named `readme_iot` (mechanically identical to
+`my_iot`). All findings reproduce on a clean `/tmp` and a Postgres
+that has not had `citext` pre-loaded.
+
+The headline: **the Quickstart appears to succeed end-to-end while
+silently leaving the consumer DB without any soot tables**, and a
+README-following operator only discovers it when something inside
+`/admin/devices` (or any other resource path) actually queries the
+missing tables. The pieces below combine to produce that:
+
+* **README's `mix soot.demo.seed` is the wrong task name.** The task
+  is `mix soot.seed --demo` (the seed task itself is `soot.seed` and
+  takes a `--demo` flag — see `soot/lib/mix/tasks/soot.seed.ex`).
+  README quickstart fails immediately at this step:
+
+      ** (Mix) The task "soot.demo.seed" could not be found.
+      Did you mean "soot.seed"?
+
+  Fix: update `README.md` Quickstart line to
+  `mix soot.seed --demo` (or rename the task to `soot.demo.seed`,
+  but the install task's own next-steps output already says
+  `mix soot.seed --demo`, so the README is the outlier).
+
+* **`mix soot.seed --demo` runs *during* `mix igniter.new`, before
+  the database exists.** The igniter install chain triggers the
+  seed automatically as the last step. Output during install:
+
+      ==> Soot seed starting (app: ReadmeIot)
+      [debug] Creating SootCore.Tenant: …
+          create  Tenant 'default'
+      [error] Postgrex.Protocol failed to connect: ** (Postgrex.Error)
+              FATAL 3D000 (invalid_catalog_name) database
+              "readme_iot_dev" does not exist
+      …(repeated × ~10 connection-pool restarts)…
+      [debug] QUERY ERROR source="users" queue=5630.6ms
+      INSERT INTO "users" … (after 5.6s pool wait)
+          skip    Admin user — %Ash.Error.Unknown{ … connection not
+                  available and request was dropped from queue
+                  after 5627ms … }
+
+  The install task's own next-steps message contradicts this — it
+  says: *"`mix soot.seed --demo` will run after `mix ash.setup` to
+  create the default tenant, an admin user, and 5 unprovisioned
+  devices."* — but the seed actually fires first, eats a 5-second
+  pool timeout per resource, and skips the admin-user step. The
+  rest of the seed continues without raising. Either gate the
+  auto-seed behind "ash.setup has succeeded" (preferred), or
+  remove the auto-seed step and rely on the README's documented
+  manual `mix soot.seed --demo` invocation.
+
+* **Seed reports success while inserting nothing for soot resources.**
+  When the operator does the recovery dance (manual `mix ash.setup`
+  → manual `mix soot.seed --demo`), the seed prints:
+
+      ==> Soot seed complete (with demo fleet).
+        Tenant:           default
+        Serial scheme:    DEMO- (default)
+        Production batch: demo-batch-1 (5 unprovisioned devices)
+        Telemetry streams: cpu, memory, disk, outdoor_temperature
+
+  …but the only table that was actually touched is `users`. The
+  log shows `[debug] QUERY OK source="users"` for the admin user;
+  there is **no** `QUERY OK source="tenants"`/`"devices"`/etc.
+  anywhere. Direct verification:
+
+      $ psql readme_iot_dev -c '\dt'
+                     List of relations
+       Schema |       Name        | Type  |  Owner
+      --------+-------------------+-------+----------
+       public | schema_migrations | table | postgres
+       public | tokens            | table | postgres
+       public | users             | table | postgres
+       (3 rows)
+
+      $ psql readme_iot_dev -c 'SELECT count(*) FROM tenants;'
+      ERROR: relation "tenants" does not exist
+
+  The `create Tenant 'default'` etc. lines in the seed output are
+  printed unconditionally regardless of whether the underlying
+  `Ash.create!` actually persisted. So the seed task lies about
+  what it did. Fix: emit success only after the underlying create
+  call returns `{:ok, _}`; surface skips/errors loudly.
+
+* **Root cause of the silent-empty-database state: `mix ash.codegen`
+  never sees the soot consumer resources.** This is the same
+  cross-repo install-chain bug already tracked above ("Generated
+  consumer resources point at the library domain that doesn't
+  accept them"), but the surfaced symptom on a current main
+  (`e3a5f90`) walk-through is different from what that entry
+  describes. The previous entry says the failure mode is
+  "errors emitted at runtime during DSL verification … HTTP path
+  stays up". On this run **no DSL verifier error fires anywhere**
+  — neither during `mix igniter.new` compile, nor during
+  `mix ash.setup`, nor during `mix soot.seed`, nor during
+  `mix phx.server` boot. Instead:
+
+  - `config :readme_iot, ash_domains: [SootContracts.Domain,
+    SootSegments.Domain, SootTelemetry.Domain, SootCore.Domain,
+    AshPki.Domain, ReadmeIot.Accounts, ReadmeIot.Support]` —
+    library-namespaced domains only.
+  - The consumer-side resources (`ReadmeIot.Tenant`,
+    `ReadmeIot.Device`, `ReadmeIot.SegmentRow`,
+    `ReadmeIot.BundleRow`, `ReadmeIot.Certificate`, …) declare
+    `domain: SootCore.Domain` / `SootSegments.Domain` /
+    `SootContracts.Domain` / `AshPki.Domain` — domains the
+    operator's app does not own and which the consumer modules
+    are not registered into.
+  - `mix ash.codegen` walks `ash_domains`, finds the library
+    domains, finds only the library's internal resources (none
+    of which are AshPostgres-backed in this project), and emits
+    no migrations for the operator's resources. The first
+    `mix ash.setup` after `mix igniter.new` only ran the
+    authentication migrations (users + tokens).
+  - Re-running `mix ash.codegen --name try_again` on the
+    finished project confirms the pattern: *"No changes detected,
+    so no migrations or snapshots have been created."*
+  - Direct Ash query against the unwired resource fails at
+    runtime with `Postgrex.Error 42P01 (undefined_table)
+    relation "tenants" does not exist`, exactly as you'd expect
+    when Ash thinks the resource is fine but no migration ever
+    created its table.
+
+  So `allow_unregistered? true` (which `SootCore.Domain` already
+  has, per the existing PROBLEMS.md table) silences the *load-time*
+  error but does nothing for the *codegen-skips-the-resource*
+  problem. Both layers need to be fixed: either the operator
+  resources need to live under an operator-side domain that's in
+  `ash_domains` (e.g. a generated `ReadmeIot.SootDomain` listing
+  all ten consumer modules), or each library installer needs to
+  also register its consumer resource into one of the operator's
+  existing domains. The existing PROBLEMS.md entry's fix-paths
+  (a) and (b) address only the runtime DSL verifier, not the
+  codegen miss. Cross-repo follow-up.
+
+* **`Spark.Error.DslError` for the `magic_link` strategy emitted
+  during `mix igniter.new` compile.** Logged as `warning:` but
+  it's a real DSL-verifier failure:
+
+      warning: ** (Spark.Error.DslError) authentication ->
+      strategies -> magic_link :
+        When registration is not enabled for magic link
+        authentication, the action:
+        ReadmeIot.Accounts.User.sign_in_with_magic_link must be
+        a :read action. Got an action of type: :create.
+
+  The generated `lib/readme_iot/accounts/user.ex` has
+  `magic_link do … registration_enabled? false … end`
+  (line 25-27) but `:sign_in_with_magic_link` is declared as a
+  `create` action (line 52) with `upsert? true`. That action
+  shape is what `ash_authentication`'s magic-link installer
+  emits for the *registration-enabled* mode; the consumer is
+  patched to disable registration without also rewriting the
+  sign-in action into the registration-disabled `read` shape
+  shown in the verifier message. Compile completes (the verifier
+  raises but it's caught somewhere upstream and demoted to a
+  warning), so the install does not abort, but the magic-link
+  sign-in flow is on shaky ground until this is fixed. Fix lives
+  in soot.install's auth wiring (the same module that already
+  carries the `:register_admin` patch).
+
+* **`mix ash.setup` fails on a Postgres image without `citext`
+  pre-loaded.** Already in PROBLEMS.md; reproduced on the local
+  `nerves_hub_web-postgres-1` (`postgres:16`) image which had
+  every other extension but not citext. Worked around by
+  `psql … -c 'CREATE EXTENSION IF NOT EXISTS citext'` before
+  re-running `mix ash.setup`. No new info beyond the existing
+  entry, but: this hits more than just the docker-compose path.
+  Any postgres install where the operator hasn't pre-created
+  the extension in `template1` will hit it.
+
+* **Generated migration file name is grotesque.** Two
+  collapsed migrations land with these names:
+
+      20260505065958_initialize_and_add_authentication_resources_and_add_magic_link_auth_and_initialize_and_initialize_and_initialize_and_initialize_extensions_1.exs
+      20260505065959_initialize_and_add_authentication_resources_and_add_magic_link_auth_and_initialize_and_initialize_and_initialize_and_initialize.exs
+
+  Each per-library installer composed into `soot.install` calls
+  `ash.codegen --name initialize`, and the names get
+  concatenated rather than deduped. Cosmetic only, but the
+  repeated `_initialize_` segments make `git status` and any
+  filesystem operation on the migrations dir noisy. Likely fix
+  is in `soot.install`: pass an explicit `--name install_soot`
+  to the single composed codegen run, instead of letting each
+  per-library installer add its own segment.
+
+* **Endpoints that the README implies should "just work" cannot
+  be smoke-tested without sign-in.** `/admin` redirects to
+  `/sign-in` (HTTP 302 → 200), `/sign-in` renders. To exercise
+  the magic-link flow non-interactively requires either fishing
+  the token out of `/dev/mailbox` (LiveView) or hitting the
+  underlying Ash action directly. README does not document a
+  CLI shortcut and the only seeded user (`admin@example.com`)
+  was *skipped* during the auto-seed (see first finding) — so
+  on the README's literal happy-path, there is no admin user to
+  sign in as until the operator does the manual recovery
+  dance. After recovery, sign-in still relies on a magic-link
+  email landing in `/dev/mailbox`. Worth either: (a) seeding a
+  pre-confirmed admin with a known password as a fallback for
+  bootstrap, or (b) adding a `mix soot.admin.create
+  --email=… --password=…` task that bypasses the magic-link
+  round-trip for first-time setup.
