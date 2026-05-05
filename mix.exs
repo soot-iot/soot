@@ -85,6 +85,14 @@ defmodule Soot.MixProject do
       {:req, "~> 0.5"},
 
       # Dev / test
+      # `ash_postgres` is an optional transitive of `:ash_authentication`,
+      # not pulled in by soot's runtime deps, so the install task code
+      # path that calls `AshPostgres.Igniter.{list_repos, add_postgres_extension}`
+      # references an unloadable module at compile time. Pulling it in
+      # under `:test` quiets the warning and lets the citext-extension
+      # test exercise the real `AshPostgres.Igniter` code path against
+      # an `Igniter.Test` project.
+      {:ash_postgres, "~> 2.6", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: [:dev], runtime: false},

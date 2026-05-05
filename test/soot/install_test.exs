@@ -297,6 +297,128 @@ defmodule Mix.Tasks.Soot.InstallTest do
     end
   end
 
+  describe "ash_postgres.install scheduling" do
+    @ecto_repo """
+    defmodule Test.Repo do
+      use Ecto.Repo, otp_app: :test, adapter: Ecto.Adapters.Postgres
+    end
+    """
+
+    # Regression for the marker false-positive that previously
+    # short-circuited ash_postgres.install. `phx.new` always emits
+    # `Test.Repo` (as an `Ecto.Repo`) before soot.install runs, so a
+    # marker check that just looked for `Test.Repo` to exist would
+    # always say "already installed" and skip ash_postgres.install,
+    # leaving the Repo unconverted and missing
+    # `installed_extensions/0`. ash_postgres.install must be composed
+    # so it converts `Ecto.Repo` to `AshPostgres.Repo` and adds
+    # `installed_extensions/0` returning `["ash-functions"]`.
+    test "is not skipped when an Ecto.Repo already exists at lib/<app>/repo.ex" do
+      result =
+        test_project(
+          files: %{
+            "lib/test_web/endpoint.ex" => @endpoint,
+            "lib/test_web/router.ex" => @router,
+            "lib/test/repo.ex" => @ecto_repo
+          }
+        )
+        |> Igniter.Project.Application.create_app(Test.Application)
+        |> apply_igniter!()
+        |> Igniter.include_existing_file("lib/test/repo.ex")
+        |> Igniter.compose_task("soot.install", [])
+
+      diff = diff(result, only: "lib/test/repo.ex")
+
+      assert diff =~ "use AshPostgres.Repo",
+             "expected ash_postgres.install to convert use Ecto.Repo to use AshPostgres.Repo"
+
+      assert diff =~ "installed_extensions",
+             "expected ash_postgres.install to add installed_extensions/0"
+    end
+
+    test "is not in the soot.install warnings as 'already installed'" do
+      result =
+        test_project(
+          files: %{
+            "lib/test_web/endpoint.ex" => @endpoint,
+            "lib/test_web/router.ex" => @router,
+            "lib/test/repo.ex" => @ecto_repo
+          }
+        )
+        |> Igniter.Project.Application.create_app(Test.Application)
+        |> apply_igniter!()
+        |> Igniter.include_existing_file("lib/test/repo.ex")
+        |> Igniter.compose_task("soot.install", [])
+
+      ash_postgres_skip_notices =
+        Enum.filter(result.notices, fn n ->
+          n =~ "Skipping `mix ash_postgres.install`"
+        end)
+
+      assert ash_postgres_skip_notices == [],
+             "ash_postgres.install was unexpectedly skipped: #{inspect(ash_postgres_skip_notices)}"
+    end
+  end
+
+  describe "citext extension on the consumer Repo" do
+    # `ash_authentication.install`'s `User` resource has a `:ci_string`
+    # email attribute → AshPostgres emits a `:citext` migration column.
+    # On a fresh `postgres:16`, `mix ash.setup` then crashes with
+    # `type "citext" does not exist` unless `"citext"` is in
+    # `installed_extensions/0`. soot.install adds it explicitly as
+    # belt-and-braces (ash_authentication.install's own setup_data_layer
+    # has been observed not to land in the on-disk Repo when composed
+    # via the soot chain).
+    @repo_with_ash_functions_only """
+    defmodule Test.Repo do
+      use AshPostgres.Repo, otp_app: :test
+
+      @impl true
+      def installed_extensions do
+        ["ash-functions"]
+      end
+
+      @impl true
+      def min_pg_version do
+        %Version{major: 16, minor: 0, patch: 0}
+      end
+    end
+    """
+
+    defp project_with_existing_repo do
+      test_project(
+        files: %{
+          "lib/test_web/endpoint.ex" => @endpoint,
+          "lib/test_web/router.ex" => @router,
+          "lib/test/repo.ex" => @repo_with_ash_functions_only
+        }
+      )
+      |> Igniter.Project.Application.create_app(Test.Application)
+      |> apply_igniter!()
+      |> Igniter.include_existing_file("lib/test/repo.ex")
+    end
+
+    test "adds citext to the consumer Repo's installed_extensions/0" do
+      result =
+        project_with_existing_repo()
+        |> Igniter.compose_task("soot.install", [])
+
+      diff = diff(result, only: "lib/test/repo.ex")
+
+      assert diff =~ "installed_extensions"
+      assert diff =~ ~s|"citext"|
+      assert diff =~ ~s|"ash-functions"|
+    end
+
+    test "is idempotent — re-running soot.install does not duplicate citext" do
+      project_with_existing_repo()
+      |> Igniter.compose_task("soot.install", [])
+      |> apply_igniter!()
+      |> Igniter.compose_task("soot.install", [])
+      |> assert_unchanged("lib/test/repo.ex")
+    end
+  end
+
   describe "running on a project without a router" do
     test "emits a warning rather than crashing" do
       igniter =

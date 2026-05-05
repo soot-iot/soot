@@ -130,6 +130,7 @@ if Code.ensure_loaded?(Igniter) do
       igniter
       |> include_existing_marker_files()
       |> compose_children(child_argv)
+      |> ensure_citext_extension()
       |> generate_example_shadow(options)
       |> mount_device_pipeline()
       |> patch_broker_runtime_config()
@@ -137,6 +138,42 @@ if Code.ensure_loaded?(Igniter) do
       |> patch_user_resource()
       |> patch_router_disable_registration()
       |> note_next_steps(options)
+    end
+
+    # `ash_authentication.install` generates a `User` resource with a
+    # `:ci_string` email attribute. AshPostgres maps `:ci_string` to
+    # the `:citext` Postgres column type, so the generated migration
+    # creates `users.email` as `:citext`. The extension itself is only
+    # installed if `"citext"` is present in the consumer Repo's
+    # `installed_extensions/0` callback.
+    #
+    # `ash_authentication.install` itself calls
+    # `AshPostgres.Igniter.add_postgres_extension(repo, "citext")` in
+    # its `setup_data_layer/2` step, and as long as ash_postgres.install
+    # has run first the addition lands correctly. The
+    # `child_already_installed?` clause for `ash_postgres.install`
+    # above is what keeps that ordering honest on a fresh `phx.new`
+    # project (where `Repo` exists as an `Ecto.Repo` but has no
+    # `installed_extensions/0`).
+    #
+    # Add it explicitly here as belt-and-braces, in case anything
+    # upstream regresses: locate the consumer Repo and append
+    # `"citext"` to `installed_extensions/0` if not already there.
+    # `add_postgres_extension/3` is idempotent (it uses
+    # `Igniter.Code.List.append_new_to_list/2`), so running this
+    # after `ash_authentication.install`'s own attempt is safe.
+    defp ensure_citext_extension(igniter) do
+      if Code.ensure_loaded?(AshPostgres.Igniter) do
+        case AshPostgres.Igniter.list_repos(igniter) do
+          {igniter, [repo | _]} ->
+            AshPostgres.Igniter.add_postgres_extension(igniter, repo, "citext")
+
+          {igniter, []} ->
+            igniter
+        end
+      else
+        igniter
+      end
     end
 
     # `phx.new --database postgres` creates `lib/<app>/repo.ex` before
@@ -265,6 +302,26 @@ if Code.ensure_loaded?(Igniter) do
     # `:app` markers live under the operator's app namespace
     # (e.g. `Backend.Accounts.User`); `:web` markers live under the
     # operator's web namespace (e.g. `BackendWeb.AuthController`).
+    #
+    # `ash_postgres.install`'s marker is `Repo` for the
+    # *pre-inclusion* step (`include_existing_marker_files`) — that
+    # path needs to load `lib/<app>/repo.ex` from disk so the
+    # composed `ash_postgres.install` finds an existing module to
+    # update rather than tripping on "File already exists". The
+    # *skip-if-already-installed* check below explicitly excludes
+    # `ash_postgres.install`, because `phx.new` always generates the
+    # Repo module (as an `Ecto.Repo`) on a fresh project — a naive
+    # marker check would false-positive on every install and skip
+    # ash_postgres.install entirely, leaving the Repo unconverted
+    # and missing `installed_extensions/0`. Downstream that breaks
+    # `ash_authentication.install`'s citext addition (it falls back
+    # to creating a brand-new `installed_extensions/0` returning just
+    # `["citext"]`, since the function ash_postgres.install would
+    # have added isn't there). ash_postgres.install is idempotent
+    # (it no-ops when the Repo is already an `AshPostgres.Repo`), so
+    # always running it is safe.
+    defp child_already_installed?(_igniter, "ash_postgres.install"), do: false
+
     defp child_already_installed?(igniter, task) do
       case child_marker_module(task) do
         nil ->
