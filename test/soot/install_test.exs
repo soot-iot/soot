@@ -214,6 +214,24 @@ defmodule Mix.Tasks.Soot.InstallTest do
     end
   end
 
+  describe "clickhouse runtime config" do
+    test "patches runtime.exs with :soot_telemetry connection config from env" do
+      result =
+        setup_project()
+        |> Igniter.compose_task("soot.install", [])
+
+      diff = diff(result, only: "config/runtime.exs")
+
+      assert diff =~ ":soot_telemetry"
+      assert diff =~ ~s|System.get_env("SOOT_CH_URL"|
+      assert diff =~ ~s|"http://localhost:8123"|
+      assert diff =~ ~s|System.get_env("SOOT_CH_USER"|
+      assert diff =~ ~s|"default"|
+      assert diff =~ ~s|System.get_env("SOOT_CH_PASSWORD"|
+      assert diff =~ "SootTelemetry.Writer.ClickHouse"
+    end
+  end
+
   describe "running on a project without a router" do
     test "emits a warning rather than crashing" do
       igniter =

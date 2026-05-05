@@ -12,3 +12,8 @@ erl_crash.dump
 *.swp
 /priv/plts/*.plt
 /priv/plts/*.plt.hash
+
+# Output of `scripts/extract_ci_runnable.sh` / `scripts/run_ci_runnable.sh`
+# when invoked with the canonical in-repo OUT_DIR. Generated stage
+# scripts; never committed.
+/scripts/extracted/
