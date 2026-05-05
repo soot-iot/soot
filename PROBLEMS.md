@@ -55,6 +55,129 @@ real:
 
 ## Carry-over tech debt
 
+* **README Quickstart flags are wrong.** Two separate issues, both
+  verified 2026-05-05 against the underlying generators' source.
+
+  *`--with-args="--database postgres"` (backend Quickstart, line 38)
+  is redundant.* `phx.new`'s `--database` already defaults to
+  `postgres` (`phx_new/lib/mix/tasks/phx.new.ex:32` — "Defaults to
+  \"postgres\""). Drop the flag; nothing changes about the generated
+  project. The `ash_postgres.install` step composed by `soot.install`
+  patches the existing `lib/<app>/repo.ex` that phx.new produced —
+  the database adapter selection happens upstream of ash_postgres
+  regardless.
+
+  *`--with-args="--target qemu_aarch64"` (device Quickstart, line 84)
+  is restrictive, not required.* `nerves.new` (verified at
+  `nerves_bootstrap/lib/mix/tasks/nerves.new.ex:181-205`) treats
+  `--target` as a *limit*: when omitted, the generated `mix.exs`
+  lists **all** officially supported Nerves systems under
+  `@all_targets` (`bbb`, `grisp2`, `osd32mp1`, `mangopi_mq_pro`,
+  `qemu_aarch64`, `rpi`, `rpi0`, `rpi0_2`, `rpi2`, `rpi3`, `rpi4`,
+  `rpi5`, `x86_64`). Passing `--target qemu_aarch64` cuts the list
+  down to just `[:qemu_aarch64]` — confirmed by inspecting the
+  scaffolded `my_device/mix.exs` here (`@all_targets [:qemu_aarch64]`,
+  only the qemu system pulled in). The generic device Quickstart
+  should drop the flag so consumers get support for every official
+  Nerves system out of the box and select between them at build
+  time via `MIX_TARGET`. The `--target qemu_aarch64` form belongs
+  *only* in the "Try it locally (QEMU device + example backend)"
+  section / `scripts/integration_e2e.sh`, where qemu is the explicit
+  goal — and even there, dropping the flag still works because
+  qemu_aarch64 is in the default set; the only reason to keep it
+  there is to shrink dep-resolution and compile time for the
+  reproducer.
+
+  Both flags are documentation drift, not functional bugs — projects
+  generated with them work, but the README mis-presents necessary
+  vs. optional, and the device flag actively blocks "support all
+  official Nerves systems."
+
+* **README's `mix ash.setup` step does not actually run migrations
+  on a fresh Postgres.** Following the backend Quickstart literally
+  (line 42, `mix ash.setup`), migrations fail before any DDL is
+  applied because the merged
+  Initialize/AddAuthenticationResources migration creates `users`
+  with `citext` email columns before any `CREATE EXTENSION citext`
+  has run. Resetting (drop + recreate the database, re-run
+  `mix ash.setup`) does not help — the migration emits the same
+  citext column on every retry, so it fails the same way.
+
+  Dev machines with a long-lived postgres typically have citext
+  pre-loaded, which is why this hides on local dev boxes. Any fresh
+  `postgres:16` image — including the one the E2E reproducer uses,
+  and any evaluator following the README on a clean machine — hits
+  it. Net effect: *the README's documented happy path does not
+  produce a working schema on a clean install.*
+
+  This is the same upstream bug already noted in the E2E
+  reproducer scope limits below ("`ash.setup` hits 'type citext
+  does not exist'…"); calling it out here separately because it's
+  not just an E2E concern — it's a README-following-evaluator
+  blocker. The `seed` stage of `scripts/integration_e2e.sh`
+  pre-runs `CREATE EXTENSION IF NOT EXISTS citext` via `psql` as
+  a workaround; the README itself has no such workaround
+  documented, so a literal README follower is stuck until they
+  know to do that out-of-band.
+
+  Real fix is upstream — `ash_authentication.install` (or whichever
+  installer adds the users-with-email migration) needs to declare
+  `citext` as a Repo extension *before* any authentication
+  migration emits a citext column. Cross-repo follow-up. Until
+  then, the README should at minimum document the manual
+  `CREATE EXTENSION citext` step, or `soot.install` should
+  inject a citext extension declaration into the consumer's Repo
+  before composing `ash_authentication.install`.
+
+* **`soot_device.install` writes `:kernel` config to the wrong file,
+  triggering Elixir's "Cannot configure base applications" warning
+  on every `mix` invocation with `MIX_TARGET=qemu_aarch64`.**
+  Reproduced 2026-05-05 against a freshly-scaffolded `my_device`:
+
+  ```
+  $ export MIX_TARGET=qemu_aarch64
+  $ mix deps.get
+  Cannot configure base applications: [:kernel]
+
+  These applications are already started by the time the configuration
+  executes and these configurations have no effect.
+  …
+  This happened when loading config/config.exs or
+  one of its imports.
+
+  Resolving Hex dependencies...
+  Resolution completed in 0.145s
+  ```
+
+  Cause: `soot_device.gen.tests.ex:194-208` (`patch_target_dist_config/1`)
+  inserts `config :kernel, inet_dist_listen_min: 9100,
+  inet_dist_listen_max: 9100` into `config/target.exs:3`. Intent is
+  to pin the Erlang distribution listen ports so the README's
+  QEMU one-liner (`hostfwd=tcp::9100-:9100`) lines up. But `:kernel`
+  is one of the OTP applications started *before* Mix loads project
+  config, so any `config :kernel, …` in compile-time config files
+  has no effect — Elixir 1.18+ surfaces this as the warning above.
+  The warning is non-fatal (deps still resolve), but it fires on
+  every `mix deps.get`, `mix compile`, `mix test`, `mix firmware`,
+  etc. against the qemu target.
+
+  The same project's `rel/vm.args.eex` already uses the correct
+  pattern for kernel config (`-kernel shell_history enabled`,
+  `+C multi_time_warp`, etc. as VM args). Fix path: drop the
+  `patch_target_dist_config/1` step from `soot_device.gen.tests`
+  and instead emit two lines into `rel/vm.args.eex`:
+
+  ```
+  -kernel inet_dist_listen_min 9100
+  -kernel inet_dist_listen_max 9100
+  ```
+
+  Wrap them in the same `<%= if Mix.env() == :test do %>` block
+  the existing `-name`/`-setcookie` lines use, since the port
+  pinning only matters when QEMU is running the test build and
+  forwarding 9100 to the host. Cross-repo follow-up: PR to
+  `soot_device`.
+
 * **`override: true` on github-branch deps is redundant** — landed
   2026-04-28 as part of the path-dep → github migration. While
   individual repo PRs were in flight, transitive deps still carried
