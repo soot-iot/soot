@@ -91,6 +91,17 @@ export SOOT_E2E_CH_USER="${SOOT_E2E_CH_USER:-soot}"
 export SOOT_E2E_CH_PASSWORD="${SOOT_E2E_CH_PASSWORD:-soot}"
 export SOOT_E2E_BACKEND_PORT="${SOOT_E2E_BACKEND_PORT:-4000}"
 
+# Runtime-knob aliases that `runtime.exs` reads via System.get_env/2.
+# Exported globally (not just for `mix phx.server`) because every mix
+# task in the seed stage — `mix ash_pki.init`, `mix ash.setup`,
+# `mix soot.seed`, `mix ash_pki.gen.cert` — boots the application,
+# which boots `SootTelemetry.Writer.ClickHouse`. Without these the
+# writer falls back to `default` / "" and CH refuses the connection
+# before the actual seed work starts.
+export SOOT_CH_URL="${SOOT_CH_URL:-http://localhost:$SOOT_E2E_CH_HTTP_PORT}"
+export SOOT_CH_USER="${SOOT_CH_USER:-$SOOT_E2E_CH_USER}"
+export SOOT_CH_PASSWORD="${SOOT_CH_PASSWORD:-$SOOT_E2E_CH_PASSWORD}"
+
 COMPOSE_BASE="$SOOT_REPO/scripts/docker-compose.base.yml"
 COMPOSE_BROKER="$SOOT_REPO/scripts/docker-compose.$BROKER.yml"
 COMPOSE_ARGS=(-f "$COMPOSE_BASE" -f "$COMPOSE_BROKER")
