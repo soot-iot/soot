@@ -483,6 +483,16 @@ stage_boot_and_test() {
   # ["test/support"]` clause never fires and `<App>.QEMU` (planted
   # there by `mix soot_device.gen.tests`) is missing — every QEMU
   # test then dies with `UndefinedFunctionError`.
+
+  # `<App>.QEMU` calls `Node.start(:"soot-device-test-host@127.0.0.1",
+  # :longnames)` to talk to the booted firmware. In OTP 27+ that fails
+  # with `:nodistribution` if epmd isn't already running — and the
+  # GHA runner doesn't start it for us. Daemonize epmd here so the
+  # distribution start succeeds. `epmd -daemon` is a no-op if one is
+  # already up, so this is safe locally too.
+  log "starting epmd (required by Node.start in QEMU test setup)"
+  epmd -daemon
+
   log "mix test --include qemu --include e2e"
   env \
     "MIX_ENV=test" \
