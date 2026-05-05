@@ -477,23 +477,22 @@ stage_boot_and_test() {
   log "  SOOT_PERSISTENCE_DIR=$host_storage"
   log "  ${env_prefix}_PERSISTENCE_DIR=$host_storage"
 
-  # Don't pin MIX_ENV here. `mix test` always runs in :test internally,
-  # and forcing the env explicitly compiles the device project's
-  # `test/support` tree (where `<App>.QEMU` lives), which surfaces
-  # the QEMU boot-and-distribution test path. That path needs epmd,
-  # QEMU networking with the host-distribution port forwarded, and a
-  # firmware that actually boots in qemu_aarch64 — none of which the
-  # generated default scaffold gets right yet (cf. soot_device's
-  # outstanding qemu-fixes work). Until that lands, leave the tests
-  # un-compiled (matching main's behaviour) so this stage exercises
-  # only the device project's smoke tests.
-  log "mix test --include qemu --include e2e"
+  # Run only the `:e2e`-tagged tests; `:qemu` stays excluded (matching
+  # the scaffold's `ExUnit.start(exclude: [:qemu])` default in
+  # `test_helper.exs`). The QEMU boot test path needs epmd, QEMU
+  # port-forwarded distribution, and a firmware that actually boots
+  # in qemu_aarch64 — none of which the default scaffold wires up
+  # today, so opting in here just produces a `do_wait_for_node`
+  # 60s-timeout × 4 every run. The QEMU work is tracked in
+  # soot_device's qemu-fixes branch; flip this back to
+  # `--include qemu` once that work lands.
+  log "mix test --include e2e"
   env \
     "SOOT_BOOTSTRAP_CERT=$bootstrap_pem" \
     "SOOT_BOOTSTRAP_KEY=$bootstrap_key" \
     "SOOT_PERSISTENCE_DIR=$host_storage" \
     "${env_prefix}_PERSISTENCE_DIR=$host_storage" \
-    mix test --include qemu --include e2e
+    mix test --include e2e
 }
 
 # --------------------------------------------------------------------
