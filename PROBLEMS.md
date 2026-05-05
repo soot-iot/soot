@@ -270,3 +270,70 @@ state is hiding.
   pinned. Keep the override mechanism in the script — not the
   workflow — so the same override is reproducible locally
   (`SOOT_E2E_OVERRIDES=... ./scripts/integration_e2e.sh all`).
+
+---
+
+## README device-side Quickstart issues (2026-05-05)
+
+Surfaced by walking the README's `## Device-side Quickstart` block
+literally on a clean machine. Generation + firmware build succeed end
+to end, but two of the steps as written do not work without
+edits/extra commands.
+
+* **`mix archive.install hex nerves_new` — no such Hex package.**
+  README line 97. Hex returns `No package with name nerves_new (from:
+  mix.exs) in registry`. The archive that provides `mix nerves.new`
+  is `nerves_bootstrap` (`mix archive.install hex nerves_bootstrap`,
+  installs as `nerves_bootstrap-1.15.x`). Fix the README copy. The
+  consumer-facing igniter sibling is `igniter_new`, which probably
+  primed the mistake — but `nerves` ships its archive under the
+  `_bootstrap` suffix.
+
+* **README's `mix compile` smoke check fails before `mix deps.get`.**
+  README lines 105–108 say:
+
+      cd my_device
+      mix compile           # host build (smoke check)
+
+      export MIX_TARGET=qemu_aarch64
+      mix deps.get
+      mix firmware
+
+  In practice `mix compile` aborts immediately:
+
+      Unchecked dependencies for environment dev:
+      * duxedo (https://github.com/soot-iot/duxedo.git - main)
+        the dependency is not available, run "mix deps.get"
+      ** (Mix) Can't continue due to errors on dependencies
+
+  Reason: `soot_device.install` adds `{:duxedo, github: ...}` to the
+  consumer's `mix.exs` (for the generated telemetry test's local
+  Duxedo capture/query) and does not run `deps.get` after patching.
+  The install task's own notice block (printed at the end of
+  `mix igniter.new`) tells the user to "Run `mix deps.get` once the
+  install completes" — but the README's next step is `mix compile`,
+  not `mix deps.get`, so a literal reader hits the failure. Two
+  fixes, either is fine:
+    1. Update the README so the host smoke-check is `mix deps.get
+       && mix compile` before exporting `MIX_TARGET`.
+    2. Make `soot_device.install` itself run a `deps.get` after the
+       mix.exs patch so subsequent compiles work without operator
+       intervention.
+
+* **Igniter post-step prints `fatal: not a git repository` then a
+  green ✓.** Cosmetic. When the parent directory isn't itself a git
+  repo, the `Initializing local git repository, staging all files,
+  and committing` step emits `fatal: not a git repository (or any
+  of the parent directories): .git` from `git status` (or similar),
+  then proceeds to `git init` + commit and reports ✓. Confusing
+  during a first-time walkthrough; not a blocker.
+
+* **`:emqtt.* is undefined` warnings on every compile.**
+  `soot_device_protocol/lib/soot_device_protocol/mqtt/transport/emqtt.ex`
+  references `:emqtt.start_link/1`, `connect/1`, `publish/5`,
+  `subscribe/3`, `unsubscribe/3`, `disconnect/1` but `:emqtt` is not
+  a transitive dep of the device project (it's a backend dep). On
+  both host and `MIX_TARGET=qemu_aarch64` compiles, six warnings fire
+  every time. Not blocking firmware build, but loud — consider
+  guarding the EMQTT transport with `Code.ensure_loaded?(:emqtt)`
+  or moving it behind an optional dep.
