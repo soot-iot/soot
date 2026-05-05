@@ -94,46 +94,56 @@ real:
   official Nerves systems."
 
 * **README's `mix ash.setup` step does not run migrations on a
-  fresh Postgres — resolved 2026-05-05.** `soot.install` now
-  appends `"citext"` to the consumer Repo's `installed_extensions/0`
-  callback as a defense-in-depth step (`ensure_citext_extension/1`
-  in `lib/mix/tasks/soot.install.ex`). The next codegen run picks
-  up the addition and emits a `CREATE EXTENSION IF NOT EXISTS
-  "citext"` migration before any users-with-email migration, so
-  `mix ash.setup` succeeds on a fresh `postgres:16` image without
-  the operator running `psql … CREATE EXTENSION citext` out-of-band.
+  fresh Postgres — resolved 2026-05-05.** Root-caused to
+  `soot.install`'s `child_already_installed?` map having a
+  false-positive marker for `ash_postgres.install`: the marker was
+  `{:app, "Repo"}`, but `phx.new` *always* generates `MyApp.Repo`
+  (as an `Ecto.Repo`) before any installer runs. The check therefore
+  always reported "already installed" on a fresh project, skipping
+  `ash_postgres.install` entirely, leaving the Repo as `Ecto.Repo`
+  with no `installed_extensions/0` callback. When
+  `ash_authentication.install` then ran its `setup_data_layer/2`
+  step and called `AshPostgres.Igniter.add_postgres_extension(repo,
+  "citext")`, the `move_to_def(:installed_extensions, 0)` lookup
+  missed and the function's fallback path created a brand-new
+  `installed_extensions/0` returning just `["citext"]`. Subsequent
+  transitive `ash_postgres.install` composes from `ash_pki.install`
+  / `soot_core.install` / etc. then appended `"ash-functions"`, so
+  the final on-disk list ended up as `["citext", "ash-functions"]`
+  — except in the actual install chain, the codegen step ran
+  before those transitive composes' edits made it through, leaving
+  only `["ash-functions"]` in the snapshot and no
+  `CREATE EXTENSION citext` in the migration.
 
-  Original finding for context:
+  The fix is in `child_already_installed?/2`: a head clause excludes
+  `ash_postgres.install` from the marker-skip path. The pre-inclusion
+  step (`include_existing_marker_files`) still loads
+  `lib/<app>/repo.ex` from disk — keeping ash_postgres.install on
+  the *update* branch instead of tripping on "File already exists"
+  — but the install task is now always composed.
+  ash_postgres.install is idempotent: it converts `Ecto.Repo` to
+  `AshPostgres.Repo` when needed, no-ops when the Repo is already
+  AshPostgres-backed, and creates a fresh module when missing. So
+  always running it is safe.
 
-  Following the backend Quickstart literally (line 42,
-  `mix ash.setup`), migrations failed before any DDL was applied
-  because the merged Initialize/AddAuthenticationResources
-  migration created `users` with `citext` email columns before any
-  `CREATE EXTENSION citext` had run. Dev machines with a
-  long-lived postgres typically had citext pre-loaded, which is why
-  this hid on local dev boxes; any fresh `postgres:16` image hit
-  it. Net effect: the README's documented happy path did not
-  produce a working schema on a clean install.
+  `soot.install` *also* keeps an `ensure_citext_extension/1` step
+  (`lib/mix/tasks/soot.install.ex`) that appends `"citext"` to the
+  Repo's `installed_extensions/0` after the child compose chain.
+  Belt-and-braces against the same class of regression (any future
+  bug that prevents ash_authentication's own citext add from
+  landing). `add_postgres_extension/3` is idempotent so running it
+  redundantly is harmless.
 
-  Why `soot.install` rather than upstream: `ash_authentication.install`
-  *does* call `AshPostgres.Igniter.add_postgres_extension(repo,
-  "citext")` in its `setup_data_layer/2` step (verified in
-  `ash_authentication 4.13.7` at
-  `lib/mix/tasks/ash_authentication.install.ex:457-461`), but in
-  practice that addition has been observed not to land in the
-  on-disk Repo file when the task is composed via the soot install
-  chain — the in-memory Igniter modification fails to persist.
-  Reproduced 2026-05-05 via `mix igniter.new my_probe --with
-  phx.new --install soot@path:…`: the generated `lib/my_probe/repo.ex`
-  contained only `["ash-functions"]`. Composing
-  `ash_authentication.install` against the same project in
-  isolation correctly produced `["ash-functions", "citext"]`, so
-  the function works; something in the soot chain interferes with
-  it. Belt-and-braces in `soot.install` is idempotent
-  (`add_postgres_extension/3` uses `append_new_to_list/2`) and
-  guaranteed to land regardless of whether the upstream addition
-  sticks; root-causing the upstream interference is a separate
-  follow-up.
+  Verified end-to-end 2026-05-05 against `mix igniter.new my_probe
+  --with phx.new --install soot@path:soot-installer-citext`: the
+  generated `lib/my_probe/repo.ex` now has
+  `["ash-functions", "citext"]` (correct order), the extensions
+  migration includes `execute("CREATE EXTENSION IF NOT EXISTS
+  \"citext\"")`, and the migration timestamps order so the
+  extension is created before any users-with-email migration runs.
+  The `psql … CREATE EXTENSION citext` workaround in
+  `scripts/integration_e2e.sh` is no longer required (separate
+  cleanup PR).
 
 * **`soot_device.install` writes `:kernel` config to the wrong file,
   triggering Elixir's "Cannot configure base applications" warning

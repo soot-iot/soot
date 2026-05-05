@@ -297,6 +297,69 @@ defmodule Mix.Tasks.Soot.InstallTest do
     end
   end
 
+  describe "ash_postgres.install scheduling" do
+    @ecto_repo """
+    defmodule Test.Repo do
+      use Ecto.Repo, otp_app: :test, adapter: Ecto.Adapters.Postgres
+    end
+    """
+
+    # Regression for the marker false-positive that previously
+    # short-circuited ash_postgres.install. `phx.new` always emits
+    # `Test.Repo` (as an `Ecto.Repo`) before soot.install runs, so a
+    # marker check that just looked for `Test.Repo` to exist would
+    # always say "already installed" and skip ash_postgres.install,
+    # leaving the Repo unconverted and missing
+    # `installed_extensions/0`. ash_postgres.install must be composed
+    # so it converts `Ecto.Repo` to `AshPostgres.Repo` and adds
+    # `installed_extensions/0` returning `["ash-functions"]`.
+    test "is not skipped when an Ecto.Repo already exists at lib/<app>/repo.ex" do
+      result =
+        test_project(
+          files: %{
+            "lib/test_web/endpoint.ex" => @endpoint,
+            "lib/test_web/router.ex" => @router,
+            "lib/test/repo.ex" => @ecto_repo
+          }
+        )
+        |> Igniter.Project.Application.create_app(Test.Application)
+        |> apply_igniter!()
+        |> Igniter.include_existing_file("lib/test/repo.ex")
+        |> Igniter.compose_task("soot.install", [])
+
+      diff = diff(result, only: "lib/test/repo.ex")
+
+      assert diff =~ "use AshPostgres.Repo",
+             "expected ash_postgres.install to convert use Ecto.Repo to use AshPostgres.Repo"
+
+      assert diff =~ "installed_extensions",
+             "expected ash_postgres.install to add installed_extensions/0"
+    end
+
+    test "is not in the soot.install warnings as 'already installed'" do
+      result =
+        test_project(
+          files: %{
+            "lib/test_web/endpoint.ex" => @endpoint,
+            "lib/test_web/router.ex" => @router,
+            "lib/test/repo.ex" => @ecto_repo
+          }
+        )
+        |> Igniter.Project.Application.create_app(Test.Application)
+        |> apply_igniter!()
+        |> Igniter.include_existing_file("lib/test/repo.ex")
+        |> Igniter.compose_task("soot.install", [])
+
+      ash_postgres_skip_notices =
+        Enum.filter(result.notices, fn n ->
+          n =~ "Skipping `mix ash_postgres.install`"
+        end)
+
+      assert ash_postgres_skip_notices == [],
+             "ash_postgres.install was unexpectedly skipped: #{inspect(ash_postgres_skip_notices)}"
+    end
+  end
+
   describe "citext extension on the consumer Repo" do
     # `ash_authentication.install`'s `User` resource has a `:ci_string`
     # email attribute → AshPostgres emits a `:citext` migration column.
