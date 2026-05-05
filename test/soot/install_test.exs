@@ -140,6 +140,71 @@ defmodule Mix.Tasks.Soot.InstallTest do
     end
   end
 
+  describe "rewrite_sign_in_with_magic_link/1" do
+    # Mirrors the action block `mix ash_authentication.add_strategy magic_link`
+    # emits. AshAuthentication's verifier rejects an action of type
+    # `:create` named `:sign_in_with_magic_link` once
+    # `registration_enabled?` is false, so when the soot install
+    # flips that flag we have to flip the action too.
+    @generated_user """
+    defmodule Test.Accounts.User do
+      use Ash.Resource
+
+      actions do
+        defaults [:read]
+
+        create :sign_in_with_magic_link do
+          description "Sign in or register a user with magic link."
+
+          argument :token, :string do
+            description "The token from the magic link that was sent to the user"
+            allow_nil? false
+          end
+
+          argument :remember_me, :boolean do
+            description "Whether to generate a remember me token"
+            allow_nil? true
+          end
+
+          upsert? true
+          upsert_identity :unique_email
+          upsert_fields [:email]
+
+          # Uses the information from the token to create or sign in the user
+          change AshAuthentication.Strategy.MagicLink.SignInChange
+
+          change {AshAuthentication.Strategy.RememberMe.MaybeGenerateTokenChange,
+                  strategy_name: :remember_me}
+
+          metadata :token, :string do
+            allow_nil? false
+          end
+        end
+      end
+    end
+    """
+
+    test "swaps create→read and the result still parses as Elixir" do
+      rewritten = Mix.Tasks.Soot.Install.rewrite_sign_in_with_magic_link(@generated_user)
+
+      refute rewritten =~ "create :sign_in_with_magic_link"
+      refute rewritten =~ "AshAuthentication.Strategy.MagicLink.SignInChange"
+      refute rewritten =~ "argument :remember_me"
+      refute rewritten =~ "upsert?"
+
+      assert rewritten =~ "read :sign_in_with_magic_link"
+      assert rewritten =~ "AshAuthentication.Strategy.MagicLink.SignInPreparation"
+
+      assert {:ok, _ast} = Code.string_to_quoted(rewritten)
+    end
+
+    test "is a no-op when the create block isn't present" do
+      content = "defmodule Foo do\n  def bar, do: :baz\nend\n"
+
+      assert Mix.Tasks.Soot.Install.rewrite_sign_in_with_magic_link(content) == content
+    end
+  end
+
   describe "router patching" do
     test "adds the :device_mtls pipeline" do
       setup_project()

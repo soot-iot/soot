@@ -605,13 +605,83 @@ if Code.ensure_loaded?(Igniter) do
           content = Rewrite.Source.get(source, :content)
 
           updated =
-            String.replace(content, "registration_enabled? true", "registration_enabled? false")
+            content
+            |> String.replace("registration_enabled? true", "registration_enabled? false")
+            |> rewrite_sign_in_with_magic_link()
 
           Rewrite.Source.update(source, :content, updated)
         end)
       else
         igniter
       end
+    end
+
+    # When `registration_enabled?` flips to false, AshAuthentication's
+    # magic-link verifier requires `:sign_in_with_magic_link` to be a
+    # `:read` action — the upsert-on-sign-in `:create` action is
+    # tagged as registration. The block below is the verbatim shape
+    # `mix ash_authentication.add_strategy magic_link` emits; we
+    # swap it for the verifier's suggested `:read` form. The
+    # remember_me change drops out (it's tied to the create action's
+    # upsert path); operators who want remember_me with disabled
+    # registration configure it on a separate `password` strategy
+    # or via the `remember_me :remember_me` add-on (already in the
+    # User template).
+    @sign_in_with_magic_link_create_block """
+        create :sign_in_with_magic_link do
+          description "Sign in or register a user with magic link."
+
+          argument :token, :string do
+            description "The token from the magic link that was sent to the user"
+            allow_nil? false
+          end
+
+          argument :remember_me, :boolean do
+            description "Whether to generate a remember me token"
+            allow_nil? true
+          end
+
+          upsert? true
+          upsert_identity :unique_email
+          upsert_fields [:email]
+
+          # Uses the information from the token to create or sign in the user
+          change AshAuthentication.Strategy.MagicLink.SignInChange
+
+          change {AshAuthentication.Strategy.RememberMe.MaybeGenerateTokenChange,
+                  strategy_name: :remember_me}
+
+          metadata :token, :string do
+            allow_nil? false
+          end
+        end\
+    """
+
+    @sign_in_with_magic_link_read_block """
+        read :sign_in_with_magic_link do
+          description "Sign in a user with magic link."
+
+          argument :token, :string do
+            description "The token from the magic link that was sent to the user"
+            allow_nil? false
+          end
+
+          # Uses the information from the token to sign in the user
+          prepare AshAuthentication.Strategy.MagicLink.SignInPreparation
+
+          metadata :token, :string do
+            allow_nil? false
+          end
+        end\
+    """
+
+    @doc false
+    def rewrite_sign_in_with_magic_link(content) do
+      String.replace(
+        content,
+        @sign_in_with_magic_link_create_block,
+        @sign_in_with_magic_link_read_block
+      )
     end
 
     # Removes the `register_path:` option from the `sign_in_route(...)`
