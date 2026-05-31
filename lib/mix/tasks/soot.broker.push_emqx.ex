@@ -90,7 +90,9 @@ defmodule Mix.Tasks.Soot.Broker.PushEmqx do
         base_url: config.url,
         auth: {:basic, "#{config.api_key}:#{config.api_secret}"},
         headers: [{"content-type", "application/json"}],
-        retry: false
+        retry: false,
+        connect_options: [timeout: 10_000],
+        receive_timeout: 30_000
       )
 
     :ok = push_acl(req, bundle["acl"] || [])
