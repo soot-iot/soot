@@ -2,11 +2,20 @@ defmodule Soot.PhoenixTestE2ETest do
   @moduledoc """
   End-to-end harness for `mix soot.gen.phoenix_test`.
 
-  Mirrors the canonical bootstrap from `README.md` § "Quickstart":
+  Mirrors the canonical bootstrap from `README.md` § "Quickstart" —
+  the one-step recipe introduced in c71b037 (`soot.install` declares
+  `:ash_postgres` in `info.installs`, so a single `mix igniter.new`
+  invocation pulls the whole stack):
 
-    1. `mix igniter.new <name> --with phx.new --install ash,...,db_connection@2.9.0 --yes`
-    2. inject `{:soot, path: …, override: true}` via Igniter so the
-       e2e exercises *this* checkout, not the published version
+    1. `mix igniter.new <name> --with phx.new --with-args="--database postgres" --install db_connection@2.9.0 --yes`
+       (soot is intentionally *not* in `--install` — we add it as a
+       path-dep next)
+    2. inject `{:soot, path: …, override: true}` and `:ash_postgres`
+       via Igniter. The ash_postgres dep mirrors what soot.install's
+       `info.installs` would have added if invoked through
+       `mix igniter.install soot@github:...` — `mix igniter.install`
+       can't accept path-dep specs, so we add the install-spec deps
+       explicitly here.
     3. `mix deps.get`
     4. `mix soot.install --yes --no-example`
     5. `mix deps.get` (composed installers may add deps)
@@ -23,24 +32,31 @@ defmodule Soot.PhoenixTestE2ETest do
   `postgres/postgres@localhost:5432` credentials baked into the
   `phx.new` template.
 
-  ## Known blocker (as of 2026-04-30)
+  ## Known blocker (as of 2026-05-04)
 
-  The harness drives steps 1–6 cleanly but `mix ash.setup` (step 7)
-  currently fails on a *pre-existing soot installer bug*: several
-  child installers (soot_segments, soot_contracts, ash_pki) generate
-  operator-namespaced resources (e.g. `MyApp.SegmentRow`) that
-  declare `domain: SootSegments.Domain` — but those library-side
-  domains' `resources do … end` blocks only list the library's own
-  resources, never the operator's. Ash's
-  `Ash.Resource.Verifiers.VerifyAcceptedByDomain` raises with no
-  escape hatch (`validate_domain_resource_inclusion?` only suppresses
-  warnings, not this verifier). Until the installers are fixed, this
-  e2e cannot complete.
+  The harness drives steps 1–7 cleanly and lands at step 8
+  (`mix test --only phoenix_test`) inside the operator project. As of
+  this writing, 1 of the 5 phoenix_test smoke tests passes (`GET /`)
+  and 4 fail. Root cause is in `mix soot.install`'s compose chain,
+  not in the gen task or the templates:
 
-  When the installer chain is fixed, this test should run
-  end-to-end. Until then, the harness still proves that
-  `mix soot.gen.phoenix_test` integrates correctly into the canonical
-  bootstrap up to compile time.
+    * `ash_postgres.install` is composed but errors with
+      "lib/<app>/repo.ex: File already exists" — the
+      `include_existing_marker_files/1` helper isn't actually making
+      the existing `Repo` module visible to the upstream installer's
+      create-or-update path. The Ecto.Repo→AshPostgres.Repo
+      conversion is therefore skipped, and the rest of the chain
+      (ash_authentication, soot_admin, …) doesn't generate its
+      operator-namespaced modules. Result: `Accounts.User` and the
+      `/admin` + `/sign-in` routes never appear in the operator
+      project, so any phoenix_test that touches them fails.
+
+    * The library-domain resource registration bug from PR #15 is
+      still latent — it would surface later in the chain if the
+      ash_postgres compose succeeded.
+
+  Set `SOOT_E2E_KEEP=1` to keep the operator project on disk after a
+  failing run for inspection.
   """
 
   use ExUnit.Case, async: false
@@ -54,7 +70,12 @@ defmodule Soot.PhoenixTestE2ETest do
   setup do
     File.rm_rf!(@tmp)
     File.mkdir_p!(@tmp)
-    on_exit(fn -> File.rm_rf!(@tmp) end)
+    # Keep the tmpdir around when the SOOT_E2E_KEEP env is set so a
+    # failing run leaves the operator project on disk for inspection.
+    if System.get_env("SOOT_E2E_KEEP") not in ["1", "true"] do
+      on_exit(fn -> File.rm_rf!(@tmp) end)
+    end
+
     :ok
   end
 
@@ -63,7 +84,16 @@ defmodule Soot.PhoenixTestE2ETest do
     project_path = Path.join(@tmp, @app_name)
 
     run_step!(
-      ~w(igniter.new #{@app_name} --with phx.new --install ash,ash_postgres,ash_phoenix --install db_connection@2.9.0 --yes),
+      [
+        "igniter.new",
+        @app_name,
+        "--with",
+        "phx.new",
+        "--with-args=--database postgres",
+        "--install",
+        "db_connection@2.9.0",
+        "--yes"
+      ],
       cd: @tmp,
       label: "igniter.new"
     )
@@ -134,10 +164,22 @@ defmodule Soot.PhoenixTestE2ETest do
   # Igniter relies on `Rewrite.TaskSupervisor` (and friends) which
   # only start when the `:rewrite` and `:igniter` apps are up.
   #
-  # The `:gettext` override is necessary because phx.new pins
-  # `~> 0.26` while soot's transitive `cinder` requires `~> 1.0` —
-  # without the override, `mix deps.get` fails resolution before any
-  # of the soot installers get to run.
+  # Several extra deps land alongside `:soot`:
+  #
+  #   * `{:gettext, "~> 1.0", override: true}` — phx.new pins
+  #     `~> 0.26` and soot's transitive `cinder` requires `~> 1.0`;
+  #     without the override `mix deps.get` fails before any soot
+  #     installer runs.
+  #   * `:ash_postgres` / `:ash_phoenix` / `:ash_authentication` /
+  #     `:ash_authentication_phoenix` — when the canonical bootstrap
+  #     uses `mix igniter.install soot@github:...`, igniter walks
+  #     soot.install's compose chain and auto-installs each composed
+  #     task's package via `info.installs` propagation. We invoke
+  #     `mix soot.install` directly (because `igniter.install` can't
+  #     accept a path-dep spec), and soot.install's
+  #     `compose_children` *skips* tasks whose package is missing
+  #     with a warning rather than installing it. So we have to seed
+  #     every package the chain needs before invoking soot.install.
   defp inject_soot_path_dep!(project_path, soot_path) do
     script = """
     {:ok, _} = Application.ensure_all_started(:igniter)
@@ -151,6 +193,10 @@ defmodule Soot.PhoenixTestE2ETest do
       {:gettext, "~> 1.0", override: true},
       yes?: true
     )
+    |> Igniter.Project.Deps.add_dep({:ash_postgres, "~> 2.6"}, yes?: true)
+    |> Igniter.Project.Deps.add_dep({:ash_phoenix, "~> 2.0"}, yes?: true)
+    |> Igniter.Project.Deps.add_dep({:ash_authentication, "~> 4.0"}, yes?: true)
+    |> Igniter.Project.Deps.add_dep({:ash_authentication_phoenix, "~> 2.0"}, yes?: true)
     |> Igniter.do_or_dry_run(yes: true)
     """
 

@@ -66,6 +66,7 @@ if Code.ensure_loaded?(Igniter) do
     def igniter(igniter) do
       igniter
       |> add_phoenix_test_dep()
+      |> configure_phoenix_test_endpoint()
       |> copy_test_templates()
       |> Igniter.add_task("deps.get", [])
       |> note_next_steps()
@@ -75,6 +76,23 @@ if Code.ensure_loaded?(Igniter) do
       Igniter.Project.Deps.add_dep(
         igniter,
         {:phoenix_test, "~> 0.7", only: :test, runtime: false}
+      )
+    end
+
+    # Phoenix_test 0.7+ requires the endpoint to be configured up-front
+    # rather than picking up `@endpoint` from `ConnCase`. Patch the
+    # operator's `config/test.exs` so every phoenix_test call resolves
+    # the endpoint without a per-test `put_endpoint` call.
+    defp configure_phoenix_test_endpoint(igniter) do
+      web_module = Igniter.Libs.Phoenix.web_module(igniter)
+      endpoint = Module.concat([web_module, "Endpoint"])
+
+      Igniter.Project.Config.configure(
+        igniter,
+        "test.exs",
+        :phoenix_test,
+        [:endpoint],
+        endpoint
       )
     end
 
