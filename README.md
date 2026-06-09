@@ -9,6 +9,8 @@ IoT framework on Ash.
   installers on top of `phx.new`).
 * [`DEVICE-SPEC.md`](DEVICE-SPEC.md) — device-side libraries
   (`soot_device_protocol`, `soot_device`, `soot_device_test`).
+* [`POLICY-SPEC.md`](POLICY-SPEC.md) — authorization policy model
+  (Device/System/User actors, default policies, no-bypass lint).
 * [`SCALING.md`](SCALING.md) — single-node ceilings and the seams that
   lift each one.
 
