@@ -93,41 +93,57 @@ real:
   vs. optional, and the device flag actively blocks "support all
   official Nerves systems."
 
-* **README's `mix ash.setup` step does not actually run migrations
-  on a fresh Postgres.** Following the backend Quickstart literally
-  (line 42, `mix ash.setup`), migrations fail before any DDL is
-  applied because the merged
-  Initialize/AddAuthenticationResources migration creates `users`
-  with `citext` email columns before any `CREATE EXTENSION citext`
-  has run. Resetting (drop + recreate the database, re-run
-  `mix ash.setup`) does not help — the migration emits the same
-  citext column on every retry, so it fails the same way.
+* **README's `mix ash.setup` step does not run migrations on a
+  fresh Postgres — resolved 2026-05-05.** Root-caused to
+  `soot.install`'s `child_already_installed?` map having a
+  false-positive marker for `ash_postgres.install`: the marker was
+  `{:app, "Repo"}`, but `phx.new` *always* generates `MyApp.Repo`
+  (as an `Ecto.Repo`) before any installer runs. The check therefore
+  always reported "already installed" on a fresh project, skipping
+  `ash_postgres.install` entirely, leaving the Repo as `Ecto.Repo`
+  with no `installed_extensions/0` callback. When
+  `ash_authentication.install` then ran its `setup_data_layer/2`
+  step and called `AshPostgres.Igniter.add_postgres_extension(repo,
+  "citext")`, the `move_to_def(:installed_extensions, 0)` lookup
+  missed and the function's fallback path created a brand-new
+  `installed_extensions/0` returning just `["citext"]`. Subsequent
+  transitive `ash_postgres.install` composes from `ash_pki.install`
+  / `soot_core.install` / etc. then appended `"ash-functions"`, so
+  the final on-disk list ended up as `["citext", "ash-functions"]`
+  — except in the actual install chain, the codegen step ran
+  before those transitive composes' edits made it through, leaving
+  only `["ash-functions"]` in the snapshot and no
+  `CREATE EXTENSION citext` in the migration.
 
-  Dev machines with a long-lived postgres typically have citext
-  pre-loaded, which is why this hides on local dev boxes. Any fresh
-  `postgres:16` image — including the one the E2E reproducer uses,
-  and any evaluator following the README on a clean machine — hits
-  it. Net effect: *the README's documented happy path does not
-  produce a working schema on a clean install.*
+  The fix is in `child_already_installed?/2`: a head clause excludes
+  `ash_postgres.install` from the marker-skip path. The pre-inclusion
+  step (`include_existing_marker_files`) still loads
+  `lib/<app>/repo.ex` from disk — keeping ash_postgres.install on
+  the *update* branch instead of tripping on "File already exists"
+  — but the install task is now always composed.
+  ash_postgres.install is idempotent: it converts `Ecto.Repo` to
+  `AshPostgres.Repo` when needed, no-ops when the Repo is already
+  AshPostgres-backed, and creates a fresh module when missing. So
+  always running it is safe.
 
-  This is the same upstream bug already noted in the E2E
-  reproducer scope limits below ("`ash.setup` hits 'type citext
-  does not exist'…"); calling it out here separately because it's
-  not just an E2E concern — it's a README-following-evaluator
-  blocker. The `seed` stage of `scripts/integration_e2e.sh`
-  pre-runs `CREATE EXTENSION IF NOT EXISTS citext` via `psql` as
-  a workaround; the README itself has no such workaround
-  documented, so a literal README follower is stuck until they
-  know to do that out-of-band.
+  `soot.install` *also* keeps an `ensure_citext_extension/1` step
+  (`lib/mix/tasks/soot.install.ex`) that appends `"citext"` to the
+  Repo's `installed_extensions/0` after the child compose chain.
+  Belt-and-braces against the same class of regression (any future
+  bug that prevents ash_authentication's own citext add from
+  landing). `add_postgres_extension/3` is idempotent so running it
+  redundantly is harmless.
 
-  Real fix is upstream — `ash_authentication.install` (or whichever
-  installer adds the users-with-email migration) needs to declare
-  `citext` as a Repo extension *before* any authentication
-  migration emits a citext column. Cross-repo follow-up. Until
-  then, the README should at minimum document the manual
-  `CREATE EXTENSION citext` step, or `soot.install` should
-  inject a citext extension declaration into the consumer's Repo
-  before composing `ash_authentication.install`.
+  Verified end-to-end 2026-05-05 against `mix igniter.new my_probe
+  --with phx.new --install soot@path:soot-installer-citext`: the
+  generated `lib/my_probe/repo.ex` now has
+  `["ash-functions", "citext"]` (correct order), the extensions
+  migration includes `execute("CREATE EXTENSION IF NOT EXISTS
+  \"citext\"")`, and the migration timestamps order so the
+  extension is created before any users-with-email migration runs.
+  The `psql … CREATE EXTENSION citext` workaround in
+  `scripts/integration_e2e.sh` is no longer required (separate
+  cleanup PR).
 
 * **`soot_device.install` writes `:kernel` config to the wrong file,
   triggering Elixir's "Cannot configure base applications" warning
@@ -309,20 +325,13 @@ state is hiding.
   HTTP path so probably a sub-pool, but worth tracing.
 
 * **`ash.setup` hits "type citext does not exist" on a fresh
-  postgres image.** The merged Initialize/AddAuthenticationResources
-  migration generated by `mix soot.install` (since c71b037 collapsed
-  the recipe to one step) creates `users` with citext email columns
-  before any `CREATE EXTENSION citext`. Dev machines with a
-  long-lived postgres typically already have citext loaded so the
-  bug doesn't surface; the docker-compose `postgres:16` image used
-  by the E2E reproducer doesn't, so `mix ash.setup` fails. The
-  script's `seed` stage now pre-creates the database and runs
-  `CREATE EXTENSION IF NOT EXISTS citext` directly via `psql` to
-  work around it. Real fix is upstream — `ash_authentication.install`
-  (or whichever installer adds the users-with-email migration)
-  needs to declare `citext` as a Repo extension before any
-  authentication migration emits a citext column. Cross-repo
-  follow-up.
+  postgres image — resolved 2026-05-05** (see carry-over tech debt
+  above). `soot.install` now ensures `"citext"` is in the consumer
+  Repo's `installed_extensions/0` so the codegen step emits a
+  `CREATE EXTENSION` migration ahead of the users-with-email
+  migration. The `seed` stage's `psql … CREATE EXTENSION citext`
+  workaround can be removed from `scripts/integration_e2e.sh`
+  once a `soot` ref including this fix is in use as `SOOT_E2E_REF`.
 
 * **Bootstrap cert path baked at compile time.** `soot_device.install`
   generates `device.ex` with
