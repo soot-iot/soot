@@ -45,10 +45,6 @@ on:
       - 'scripts/integration_e2e.sh'
       - 'scripts/docker-compose.*.yml'
       - '.github/workflows/integration.yml'
-  schedule:
-    # Weekly nightly run to catch hex / Nerves system drift even when
-    # nothing in this repo changes.
-    - cron: '0 4 * * 0'
   workflow_dispatch:
 
 # Cancel superseded runs on the same ref so a fast-typed PR doesn't
